@@ -4,7 +4,7 @@ import asyncio
 import json
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -22,9 +22,86 @@ load_dotenv()
 # Add FastAPI app for HTTP endpoints
 app = FastAPI()
 
-@app.get("/", response_class=PlainTextResponse)
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    return "GitHub Report Server is running! Visit /github-report for the report."
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>GitHub Report</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .refresh-btn { 
+                background-color: #007bff; 
+                color: white; 
+                padding: 10px 20px; 
+                border: none; 
+                border-radius: 5px; 
+                cursor: pointer; 
+                font-size: 16px;
+                margin-bottom: 20px;
+            }
+            .refresh-btn:hover { background-color: #0056b3; }
+            .refresh-btn:disabled { background-color: #6c757d; cursor: not-allowed; }
+            .loading { color: #666; font-style: italic; }
+            .error { color: #dc3545; }
+            .report { 
+                background-color: #f8f9fa; 
+                padding: 20px; 
+                border-radius: 5px; 
+                white-space: pre-wrap; 
+                font-family: monospace; 
+                font-size: 14px;
+                max-height: 600px;
+                overflow-y: auto;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>GitHub Organization Report</h1>
+                <button class="refresh-btn" onclick="loadReport()">Refresh Report</button>
+            </div>
+            <div id="report-container">
+                <div class="loading">Loading report...</div>
+            </div>
+        </div>
+        
+        <script>
+            async function loadReport() {
+                const btn = document.querySelector('.refresh-btn');
+                const container = document.getElementById('report-container');
+                
+                btn.disabled = true;
+                btn.textContent = 'Loading...';
+                container.innerHTML = '<div class="loading">Loading report...</div>';
+                
+                try {
+                    const response = await fetch('/api/github-report');
+                    const data = await response.text();
+                    
+                    if (response.ok) {
+                        container.innerHTML = '<div class="report">' + data + '</div>';
+                    } else {
+                        container.innerHTML = '<div class="error">Error: ' + data + '</div>';
+                    }
+                } catch (error) {
+                    container.innerHTML = '<div class="error">Error loading report: ' + error.message + '</div>';
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Refresh Report';
+                }
+            }
+            
+            // Load report on page load
+            window.onload = loadReport;
+        </script>
+    </body>
+    </html>
+    """
 
 # Store notes as a simple key-value dict to demonstrate state management
 notes: dict[str, str] = {}
@@ -255,8 +332,8 @@ async def handle_call_tool(
     else:
         raise ValueError(f"Unknown tool: {name}")
 
-@app.get("/github-report", response_class=PlainTextResponse)
-async def github_report():
+@app.get("/api/github-report", response_class=PlainTextResponse)
+async def github_report_api():
     """
     Fetches all members of a GitHub organization, counts their commits and assigned issues for the current iteration, and returns a report.
     """
@@ -404,6 +481,13 @@ async def github_report():
         
     except Exception as e:
         return f"Unexpected error: {str(e)}\n\nPlease check your GitHub token and organization access."
+
+@app.get("/github-report", response_class=PlainTextResponse)
+async def github_report():
+    """
+    Legacy endpoint that redirects to the new web interface.
+    """
+    return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
 
 async def main():
     # Run the server using stdin/stdout streams
