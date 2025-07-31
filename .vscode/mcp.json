@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "agent-mcp-demo": {
+      "type": "stdio",
+      "command": "/Users/jqzhao/projects/copilot-aidevday-2025/.venv/bin/python",
+      "args": ["-m", "agent_mcp_demo.server"]
+    }
+  }
+}
