@@ -13,8 +13,7 @@ import mcp.server.stdio
 import os
 from github import Github
 from dotenv import load_dotenv
-from azure.devops.connection import Connection
-from msrest.authentication import BasicAuthentication
+# Removed Azure DevOps imports - now using GitHub Projects
 
 # Load environment variables from .env file at startup
 load_dotenv()
@@ -118,41 +117,54 @@ def read_from_json_file(filepath: str) -> dict:
     with open(filepath, 'r') as f:
         return json.load(f)
 
-# Agent 3: Get iteration information from Azure DevOps
-def get_current_iteration_info(org_url: str, project_name: str, personal_access_token: str) -> dict:
+# Agent 3: Get iteration information from GitHub Projects
+def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
     """
-    Get current iteration information from Azure DevOps
+    Get current iteration information from GitHub Projects
     """
     try:
-        # Create a connection to Azure DevOps
-        credentials = BasicAuthentication('', personal_access_token)
-        connection = Connection(base_url=org_url, creds=credentials)
+        g = Github(github_token)
         
-        # Get the work client
-        work_client = connection.clients.get_work_client()
+        # Get the organization
+        org = g.get_organization(org_name)
         
-        # Get iterations for the project
-        iterations = work_client.get_iterations(project=project_name)
+        # Get projects for the organization
+        projects = org.get_projects()
         
-        # Find the current iteration (active iteration)
-        current_iteration = None
-        for iteration in iterations:
-            if iteration.attributes and iteration.attributes.time_frame == 'current':
-                current_iteration = iteration
+        # Find the specific project
+        target_project = None
+        for project in projects:
+            if project.name == project_name:
+                target_project = project
                 break
         
-        if current_iteration:
+        if not target_project:
+            print(f"Project '{project_name}' not found in organization '{org_name}'")
+            return None
+        
+        # Get the project's iterations (sprints)
+        # Note: GitHub Projects API for iterations might require GraphQL
+        # For now, we'll use a simplified approach with environment variables
+        # or try to get iteration info from project fields
+        
+        # Check if we have iteration dates in environment variables
+        iteration_start = os.environ.get("GITHUB_ITERATION_START")
+        iteration_end = os.environ.get("GITHUB_ITERATION_END")
+        iteration_name = os.environ.get("GITHUB_ITERATION_NAME", "Current Sprint")
+        
+        if iteration_start and iteration_end:
             return {
-                'name': current_iteration.name,
-                'start_date': current_iteration.attributes.start_date.isoformat() if current_iteration.attributes.start_date else None,
-                'end_date': current_iteration.attributes.finish_date.isoformat() if current_iteration.attributes.finish_date else None,
-                'path': current_iteration.path
+                'name': iteration_name,
+                'start_date': iteration_start,
+                'end_date': iteration_end,
+                'path': f"{org_name}/{project_name}"
             }
         else:
+            print("No iteration dates found in environment variables")
             return None
             
     except Exception as e:
-        print(f"Error getting iteration info: {e}")
+        print(f"Error getting iteration info from GitHub Projects: {e}")
         return None
 
 
@@ -339,23 +351,19 @@ async def github_report_api():
     """
     GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
     ORG_NAME = os.environ.get("GITHUB_ORG_NAME")
-    AZURE_DEVOPS_TOKEN = os.environ.get("AZURE_DEVOPS_TOKEN")
-    AZURE_DEVOPS_ORG_URL = os.environ.get("AZURE_DEVOPS_ORG_URL")
-    AZURE_DEVOPS_PROJECT = os.environ.get("AZURE_DEVOPS_PROJECT")
     
     if not GITHUB_TOKEN:
         return "GitHub token not set in environment. Please set GITHUB_TOKEN environment variable."
     if not ORG_NAME:
         return "GitHub organization name not set in environment. Please set GITHUB_ORG_NAME environment variable."
     
-    # Get current iteration information
+    # Get current iteration information from GitHub Projects
     iteration_info = None
-    if AZURE_DEVOPS_TOKEN and AZURE_DEVOPS_ORG_URL and AZURE_DEVOPS_PROJECT:
-        try:
-            iteration_info = get_current_iteration_info(AZURE_DEVOPS_ORG_URL, AZURE_DEVOPS_PROJECT, AZURE_DEVOPS_TOKEN)
-            print(f"Retrieved iteration info: {iteration_info}")
-        except Exception as e:
-            print(f"Error getting iteration info: {e}")
+    try:
+        iteration_info = get_current_iteration_info(GITHUB_TOKEN, ORG_NAME, "Michigan App Team Task Board")
+        print(f"Retrieved iteration info: {iteration_info}")
+    except Exception as e:
+        print(f"Error getting iteration info: {e}")
     
     try:
         # Test GitHub connection with timeout

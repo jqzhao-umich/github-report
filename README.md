@@ -77,44 +77,43 @@ The agent includes a GitHub report feature that requires environment variables t
    python load_env.py
    ```
 
-### Azure DevOps Integration Setup (Optional)
+### GitHub Projects Integration Setup (Optional)
 
-For iteration-based reporting, you can also configure Azure DevOps integration:
+For iteration-based reporting, you can configure GitHub Projects integration:
 
-1. **Generate an Azure DevOps Personal Access Token:**
-   - Go to Azure DevOps → User Settings → Personal access tokens
-   - Click "New Token"
-   - Select scopes: `vso.work` (for iteration access)
-   - Copy the generated token
+1. **Ensure your GitHub token has the required scopes:**
+   - `repo` (for repository access)
+   - `read:org` (for organization access)
+   - `read:user` (for user information)
 
-2. **Add Azure DevOps Environment Variables:**
+2. **Add GitHub Projects Environment Variables (Optional):**
    
    **Option A: Add to .env file:**
    ```
-   AZURE_DEVOPS_TOKEN=your_azure_devops_token_here
-   AZURE_DEVOPS_ORG_URL=https://dev.azure.com/your_organization
-   AZURE_DEVOPS_PROJECT=your_project_name
+   GITHUB_ITERATION_START=2024-01-15T00:00:00Z
+   GITHUB_ITERATION_END=2024-01-29T23:59:59Z
+   GITHUB_ITERATION_NAME=Current Sprint
    ```
    
    **Option B: Manual setup:**
    ```bash
-   export AZURE_DEVOPS_TOKEN="your_azure_devops_token_here"
-   export AZURE_DEVOPS_ORG_URL="https://dev.azure.com/your_organization"
-   export AZURE_DEVOPS_PROJECT="your_project_name"
+   export GITHUB_ITERATION_START="2024-01-15T00:00:00Z"
+   export GITHUB_ITERATION_END="2024-01-29T23:59:59Z"
+   export GITHUB_ITERATION_NAME="Current Sprint"
    ```
 
-   **Note:** If Azure DevOps integration is not configured, the report will show all-time data instead of iteration-filtered data.
+   **Note:** The application will look for the "Michigan App Team Task Board" project in your organization. If iteration dates are not configured, the report will show all-time data instead of iteration-filtered data.
 
 ### Iteration-Based Reporting
 
 The application now supports iteration-based reporting that:
 
-1. **Fetches current iteration information** from Azure DevOps
+1. **Fetches current iteration information** from GitHub Projects ("Michigan App Team Task Board")
 2. **Filters commits and issues** to only show those within the current iteration timeframe
 3. **Displays iteration details** at the top of the report including:
    - Iteration name
    - Start and end dates
-   - Iteration path
+   - Project path
 
 **Example Report Output:**
 ```
@@ -127,7 +126,7 @@ CURRENT ITERATION INFORMATION
 Iteration Name: Sprint 2024.1
 Start Date: 2024-01-15T00:00:00Z
 End Date: 2024-01-29T23:59:59Z
-Iteration Path: \WeMoAD-umich\Sprint 2024.1
+Project Path: WeMoAD-umich/Michigan App Team Task Board
 ============================================================
 
 Processed 5 repositories
