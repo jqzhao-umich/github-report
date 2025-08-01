@@ -117,37 +117,278 @@ def read_from_json_file(filepath: str) -> dict:
     with open(filepath, 'r') as f:
         return json.load(f)
 
-# Agent 3: Get iteration information from GitHub Projects
+# Agent 3: Get iteration information from GitHub Projects (GraphQL API)
 def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
     """
-    Get current iteration information from GitHub Projects
+    Get current iteration information from GitHub Projects using GraphQL API
     """
     try:
-        g = Github(github_token)
+        import requests
+        import json
         
-        # Get the organization
-        org = g.get_organization(org_name)
+        headers = {
+            'Authorization': f'Bearer {github_token}',
+            'Content-Type': 'application/json',
+        }
         
-        # Get projects for the organization
-        projects = org.get_projects()
+        # GraphQL query to get organization projects
+        query = """
+        query($orgName: String!) {
+          organization(login: $orgName) {
+            projectsV2(first: 20) {
+              nodes {
+                id
+                title
+                number
+                url
+              }
+            }
+          }
+        }
+        """
+        
+        variables = {
+            "orgName": org_name
+        }
+        
+        response = requests.post(
+            'https://api.github.com/graphql',
+            headers=headers,
+            json={'query': query, 'variables': variables}
+        )
+        
+        if response.status_code != 200:
+            print(f"Error getting projects via GraphQL: {response.status_code} - {response.text}")
+            return None
+        
+        data = response.json()
+        
+        if 'errors' in data:
+            print(f"GraphQL errors: {data['errors']}")
+            return None
+        
+        projects = data['data']['organization']['projectsV2']['nodes']
+        print(f"Found {len(projects)} projects in organization")
         
         # Find the specific project
         target_project = None
         for project in projects:
-            if project.name == project_name:
+            if project.get('title') == project_name:
                 target_project = project
                 break
         
         if not target_project:
             print(f"Project '{project_name}' not found in organization '{org_name}'")
+            print(f"Available projects: {[p.get('title') for p in projects]}")
             return None
         
-        # Get the project's iterations (sprints)
-        # Note: GitHub Projects API for iterations might require GraphQL
-        # For now, we'll use a simplified approach with environment variables
-        # or try to get iteration info from project fields
+        print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
         
-        # Check if we have iteration dates in environment variables
+        # Try to get project fields using GraphQL
+        fields_query = """
+        query($projectId: ID!) {
+          node(id: $projectId) {
+            ... on ProjectV2 {
+              fields(first: 50) {
+                nodes {
+                  ... on ProjectV2Field {
+                    id
+                    name
+                    dataType
+                  }
+                  ... on ProjectV2IterationField {
+                    id
+                    name
+                    configuration {
+                      iterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        
+        fields_variables = {
+            "projectId": target_project.get('id')
+        }
+        
+        fields_response = requests.post(
+            'https://api.github.com/graphql',
+            headers=headers,
+            json={'query': fields_query, 'variables': fields_variables}
+        )
+        
+        print(f"Fields response status: {fields_response.status_code}")
+        if fields_response.status_code == 200:
+            fields_data = fields_response.json()
+            print(f"Fields response: {json.dumps(fields_data, indent=2)}")
+            
+            if 'data' in fields_data and fields_data['data']['node']:
+                fields = fields_data['data']['node']['fields']['nodes']
+                print(f"Found {len(fields)} project fields")
+                
+                # Look for iteration fields
+                for field in fields:
+                    print(f"Field type: {field.get('__typename')}, name: {field.get('name')}")
+                    
+                    # Check if this is an iteration field by name or type
+                    if (field.get('__typename') == 'ProjectV2IterationField' or 
+                        field.get('name', '').lower() == 'iteration'):
+                        print(f"Found iteration field: {json.dumps(field, indent=2)}")
+                        
+                        # Check if this field has configuration with iterations
+                        if 'configuration' in field and 'iterations' in field['configuration']:
+                            iterations = field['configuration']['iterations']
+                            print(f"Found {len(iterations)} iterations")
+                            if iterations:
+                                # Find the current iteration based on today's date
+                                from datetime import datetime, timedelta
+                                today = datetime.now().date()
+                                current_iteration = None
+                                
+                                for iteration in iterations:
+                                    start_date = iteration.get('startDate')
+                                    duration = iteration.get('duration')
+                                    
+                                    if start_date and duration:
+                                        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                                        end_dt = start_dt + timedelta(days=duration)
+                                        
+                                        # Check if today falls within this iteration
+                                        if start_dt <= today <= end_dt:
+                                            current_iteration = iteration
+                                            print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                            break
+                                
+                                # If no current iteration found, use the most recent past iteration
+                                if not current_iteration:
+                                    for iteration in reversed(iterations):
+                                        start_date = iteration.get('startDate')
+                                        duration = iteration.get('duration')
+                                        
+                                        if start_date and duration:
+                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                                            end_dt = start_dt + timedelta(days=duration)
+                                            
+                                            # Use the most recent iteration that has ended
+                                            if end_dt < today:
+                                                current_iteration = iteration
+                                                print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                break
+                                
+                                # If still no iteration found, use the first one (fallback)
+                                if not current_iteration and iterations:
+                                    current_iteration = iterations[0]
+                                    print(f"Using fallback iteration: {current_iteration.get('title')}")
+                                
+                                if current_iteration:
+                                    # Calculate end date from start date and duration
+                                    start_date = current_iteration.get('startDate')
+                                    duration = current_iteration.get('duration')
+                                    
+                                    if start_date and duration:
+                                        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                                        end_dt = start_dt + timedelta(days=duration)
+                                        end_date = end_dt.isoformat()
+                                    else:
+                                        end_date = None
+                                    
+                                    return {
+                                        'name': current_iteration.get('title', 'Current Sprint'),
+                                        'start_date': start_date,
+                                        'end_date': end_date,
+                                        'path': f"{org_name}/{project_name}"
+                                    }
+                        
+                        # If we found an iteration field but couldn't get configuration, 
+                        # try to get the field ID and query it separately
+                        field_id = field.get('id')
+                        if field_id:
+                            print(f"Trying to get iteration data for field ID: {field_id}")
+                            
+                            # Try to get iteration data from the field response
+                            if 'data' in fields_data and 'node' in fields_data['data']:
+                                node_data = fields_data['data']['node']
+                                if 'fields' in node_data and 'nodes' in node_data['fields']:
+                                    for field_node in node_data['fields']['nodes']:
+                                        if field_node.get('__typename') == 'ProjectV2IterationField':
+                                            if 'configuration' in field_node and 'iterations' in field_node['configuration']:
+                                                iterations = field_node['configuration']['iterations']
+                                                if iterations:
+                                                    # Find the current iteration based on today's date
+                                                    from datetime import datetime, timedelta
+                                                    today = datetime.now().date()
+                                                    current_iteration = None
+                                                    
+                                                    for iteration in iterations:
+                                                        start_date = iteration.get('startDate')
+                                                        duration = iteration.get('duration')
+                                                        
+                                                        if start_date and duration:
+                                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                                                            end_dt = start_dt + timedelta(days=duration)
+                                                            
+                                                            # Check if today falls within this iteration
+                                                            if start_dt <= today <= end_dt:
+                                                                current_iteration = iteration
+                                                                print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                                break
+                                                    
+                                                    # If no current iteration found, use the most recent past iteration
+                                                    if not current_iteration:
+                                                        for iteration in reversed(iterations):
+                                                            start_date = iteration.get('startDate')
+                                                            duration = iteration.get('duration')
+                                                            
+                                                            if start_date and duration:
+                                                                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                                                                end_dt = start_dt + timedelta(days=duration)
+                                                                
+                                                                # Use the most recent iteration that has ended
+                                                                if end_dt < today:
+                                                                    current_iteration = iteration
+                                                                    print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                                    break
+                                                    
+                                                    # If still no iteration found, use the first one (fallback)
+                                                    if not current_iteration and iterations:
+                                                        current_iteration = iterations[0]
+                                                        print(f"Using fallback iteration: {current_iteration.get('title')}")
+                                                    
+                                                    if current_iteration:
+                                                        # Calculate end date from start date and duration
+                                                        start_date = current_iteration.get('startDate')
+                                                        duration = current_iteration.get('duration')
+                                                    
+                                                    if start_date and duration:
+                                                        from datetime import datetime, timedelta
+                                                        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                                                        end_dt = start_dt + timedelta(days=duration)
+                                                        end_date = end_dt.isoformat()
+                                                    else:
+                                                        end_date = None
+                                                    
+                                                    return {
+                                                        'name': current_iteration.get('title', 'Current Sprint'),
+                                                        'start_date': start_date,
+                                                        'end_date': end_date,
+                                                        'path': f"{org_name}/{project_name}"
+                                                    }
+                            
+                            print("Iteration field found but configuration not accessible, falling back to environment variables")
+            else:
+                print(f"No project data found in response")
+        else:
+            print(f"Fields request failed: {fields_response.status_code} - {fields_response.text}")
+        
+        # Fall back to environment variables
         iteration_start = os.environ.get("GITHUB_ITERATION_START")
         iteration_end = os.environ.get("GITHUB_ITERATION_END")
         iteration_name = os.environ.get("GITHUB_ITERATION_NAME", "Current Sprint")
@@ -392,7 +633,7 @@ async def github_report_api():
         except Exception as e:
             return f"Error getting organization members: {str(e)}"
         
-        member_stats = {m.login: {"commits": 0, "assigned_issues": 0} for m in members}
+        member_stats = {m.login: {"commits": 0, "assigned_issues": 0, "closed_issues": 0} for m in members}
         
         # Filter by iteration dates if available
         iteration_start = None
@@ -407,51 +648,119 @@ async def github_report_api():
         
         # For each repo, count commits and assigned issues for current iteration
         repo_count = 0
+        total_commits_processed = 0
+        total_issues_processed = 0
         for repo in org.get_repos():
             repo_count += 1
             # Removed artificial limit to process all repositories
                 
-            # Commits per user (filtered by iteration if available)
+            # Commits per user from all branches (filtered by iteration if available)
             try:
                 commit_count = 0
-                for commit in repo.get_commits():
-                    commit_count += 1
-                    if commit_count > 1000:  # Increased limit to 1000 commits per repo
+                # Get all branches for this repository
+                branches = repo.get_branches()
+                for branch in branches:
+                    try:
+                        for commit in repo.get_commits(sha=branch.name):
+                            commit_count += 1
+                            total_commits_processed += 1
+                            if commit_count > 1000:  # Increased limit to 1000 commits per repo
+                                break
+                            
+                            # Filter by iteration dates if available
+                            if iteration_start and iteration_end:
+                                try:
+                                    commit_date = commit.commit.author.date
+                                    # Make sure both dates are timezone-aware for comparison
+                                    if commit_date.tzinfo is None:
+                                        # If commit_date is naive, assume UTC
+                                        from datetime import timezone
+                                        commit_date = commit_date.replace(tzinfo=timezone.utc)
+                                    
+                                    # Ensure iteration dates are also timezone-aware
+                                    if iteration_start.tzinfo is None:
+                                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
+                                    if iteration_end.tzinfo is None:
+                                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
+                                    
+                                    if not (iteration_start <= commit_date <= iteration_end):
+                                        continue
+                                    else:
+                                        print(f"Found commit in iteration: {commit.commit.message[:50]}... by {commit.author.login if commit.author else 'Unknown'} on branch {branch.name}")
+                                except AttributeError:
+                                    # Skip commits with invalid author data
+                                    continue
+                            
+                            if commit.author and hasattr(commit.author, 'login') and commit.author.login in member_stats:
+                                member_stats[commit.author.login]["commits"] += 1
+                    except Exception as e:
+                        print(f"Error getting commits for branch {branch.name} in {repo.name}: {e}")
+                        continue
+                        
+                    if commit_count > 1000:  # Stop if we hit the limit
                         break
-                    
-                    # Filter by iteration dates if available
-                    if iteration_start and iteration_end:
-                        try:
-                            commit_date = commit.commit.author.date
-                            if not (iteration_start <= commit_date <= iteration_end):
-                                continue
-                        except AttributeError:
-                            # Skip commits with invalid author data
-                            continue
-                    
-                    if commit.author and hasattr(commit.author, 'login') and commit.author.login in member_stats:
-                        member_stats[commit.author.login]["commits"] += 1
             except Exception as e:
-                print(f"Error getting commits for {repo.name}: {e}")
+                print(f"Error getting branches for {repo.name}: {e}")
                 continue
                 
-            # Assigned issues per user (filtered by iteration if available)
+            # Assigned and closed issues per user (filtered by assignment/closed dates)
             try:
                 issue_count = 0
-                for issue in repo.get_issues(state="open"):
+                # Get both open and closed issues
+                for issue in repo.get_issues(state="all"):
                     issue_count += 1
+                    total_issues_processed += 1
                     if issue_count > 500:  # Increased limit to 500 issues per repo
                         break
                     
-                    # Filter by iteration dates if available
-                    if iteration_start and iteration_end:
-                        issue_date = issue.created_at
-                        if not (iteration_start <= issue_date <= iteration_end):
-                            continue
-                    
+                    # Track assignees for both open and closed issues
                     for assignee in issue.assignees:
                         if assignee.login in member_stats:
-                            member_stats[assignee.login]["assigned_issues"] += 1
+                            # For open issues: check if assigned during iteration
+                            if issue.state == "open":
+                                # Use assignment date if available, otherwise creation date
+                                assignment_date = getattr(issue, 'assigned_at', None) or issue.created_at
+                                if assignment_date.tzinfo is None:
+                                    from datetime import timezone
+                                    assignment_date = assignment_date.replace(tzinfo=timezone.utc)
+                                
+                                if iteration_start and iteration_end:
+                                    # Ensure iteration dates are timezone-aware
+                                    if iteration_start.tzinfo is None:
+                                        from datetime import timezone
+                                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
+                                    if iteration_end.tzinfo is None:
+                                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
+                                    
+                                    if iteration_start <= assignment_date <= iteration_end:
+                                        member_stats[assignee.login]["assigned_issues"] += 1
+                                        print(f"Found assigned issue in iteration: {issue.title[:50]}... assigned to {assignee.login}")
+                                else:
+                                    # If no iteration filtering, count all assigned issues
+                                    member_stats[assignee.login]["assigned_issues"] += 1
+                            
+                            # For closed issues: check if closed during iteration
+                            elif issue.state == "closed":
+                                # Use closed date if available, otherwise creation date
+                                closed_date = getattr(issue, 'closed_at', None) or issue.created_at
+                                if closed_date.tzinfo is None:
+                                    from datetime import timezone
+                                    closed_date = closed_date.replace(tzinfo=timezone.utc)
+                                
+                                if iteration_start and iteration_end:
+                                    # Ensure iteration dates are timezone-aware
+                                    if iteration_start.tzinfo is None:
+                                        from datetime import timezone
+                                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
+                                    if iteration_end.tzinfo is None:
+                                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
+                                    
+                                    if iteration_start <= closed_date <= iteration_end:
+                                        member_stats[assignee.login]["closed_issues"] += 1
+                                        print(f"Found closed issue in iteration: {issue.title[:50]}... closed by {assignee.login}")
+                                else:
+                                    # If no iteration filtering, count all closed issues
+                                    member_stats[assignee.login]["closed_issues"] += 1
             except Exception as e:
                 print(f"Error getting issues for {repo.name}: {e}")
                 continue
@@ -478,13 +787,15 @@ async def github_report_api():
             report.append("")  # Empty line for spacing
         
         report.append(f"Processed {repo_count} repositories")
+        report.append(f"Total commits processed: {total_commits_processed}")
+        report.append(f"Total issues processed: {total_issues_processed}")
         if iteration_start and iteration_end:
             report.append(f"Filtered by iteration: {iteration_start.strftime('%Y-%m-%d')} to {iteration_end.strftime('%Y-%m-%d')}")
         report.append("")
-        report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14}")
-        report.append("-"*50)
+        report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13}")
+        report.append("-"*65)
         for login, stats in member_stats.items():
-            report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14}")
+            report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
         return "\n".join(report)
         
     except Exception as e:
