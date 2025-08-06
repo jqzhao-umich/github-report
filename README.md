@@ -1,44 +1,48 @@
-# agent-mcp-demo MCP server
+# GitHub Organization Report Generator
 
-MCP server with two agents: one for API, one for JSON file
+A FastAPI-based web application that generates comprehensive activity reports for GitHub organizations. The application provides detailed insights into organization-wide development activities with support for iteration-based (sprint) filtering.
 
-## Components
+## Features
 
-### Resources
+### GitHub Organization Analysis
+- **Member Activity Tracking**: Tracks commits, assigned issues, and closed issues for all organization members
+- **Multi-Repository Support**: Analyzes activity across all non-archived repositories in the organization
+- **Branch Coverage**: Examines commits across all branches for comprehensive activity tracking
+- **User Identification**: Smart matching of commits to users via GitHub API, email addresses, and username patterns
 
-The server implements a simple note storage system with:
-- Custom note:// URI scheme for accessing individual notes
-- Each note resource has a name, description and text/plain mimetype
+### Iteration-Based Reporting
+- **Sprint Integration**: Integrates with GitHub Projects for iteration/sprint-based filtering
+- **Date Range Filtering**: Filters commits and issues based on iteration start and end dates
+- **Timezone Support**: All timestamps are displayed in Detroit timezone (EDT/EST)
 
-### Prompts
+### Report Components
+1. **Summary Statistics**:
+   - Total repositories processed
+   - Total commits and issues analyzed
+   - Activity filtered by iteration dates
 
-The server provides a single prompt:
-- summarize-notes: Creates summaries of all stored notes
-  - Optional "style" argument to control detail level (brief/detailed)
-  - Generates prompt combining all current notes with style preference
+2. **Per-User Activity**:
+   - Commit counts and details
+   - Assigned issues tracking
+   - Closed issues monitoring
 
-### Tools
+3. **Detailed Breakdown**:
+   - Commit messages with timestamps
+   - Issue assignments with status
+   - Issue closure tracking
 
-The server implements one tool:
-- add-note: Adds a new note to the server
-  - Takes "name" and "content" as required string arguments
-  - Updates server state and notifies clients of resource changes
+### Web Interface
+- **Interactive Dashboard**: Clean, user-friendly web interface
+- **Real-time Updates**: Refresh capability for latest data
+- **Formatted Output**: Well-structured, easy-to-read report format
 
-## Agent-based system example
+## Technical Implementation
 
-Agent 1: Fetch data from an API
-Usage example:
-result = await fetch_from_api('https://api.example.com/data')
-
-Agent 2: Read data from a JSON file
-Usage example:
-result = read_from_json_file('sample_data.json')
-
-The server exposes both agents as tools:
-- fetch-api-data: Takes a URL and returns the API response
-- read-json-file: Takes a file path and returns the JSON content
-
-See src/agent_mcp_demo/server.py for implementation details.
+The application is built using:
+- **FastAPI**: Modern, fast web framework for building APIs
+- **PyGithub**: GitHub API v3 integration
+- **Docker**: Containerized deployment for easy setup
+- **Environment Configuration**: Flexible configuration via environment variables or .env file
 
 ## Configuration
 
@@ -143,12 +147,21 @@ teammate2           |      12 |              1
 
    **Option A: Using Docker (Recommended):**
    ```bash
-   # Build and run with Docker Compose
-   docker-compose up --build
-   
-   # Or build and run with Docker directly
-   docker build -t github-report-app .
-   docker run -p 8000:8000 -e GITHUB_TOKEN=your_token -e GITHUB_ORG_NAME=your_org github-report-app
+   # Build the Docker image
+   docker build -t github-report .
+
+   # Run the container in foreground (recommended for development)
+   docker run --name github-report-container --env-file .env -p 8000:8000 github-report uvicorn src.agent_mcp_demo.server:app --host 0.0.0.0 --port 8000
+
+   # To stop the container
+   docker stop github-report-container
+
+   # To remove the container (after stopping)
+   docker rm github-report-container
+
+   # To rebuild and restart (after making changes)
+   docker build -t github-report .
+   docker run --name github-report-container --env-file .env -p 8000:8000 github-report uvicorn src.agent_mcp_demo.server:app --host 0.0.0.0 --port 8000
    ```
 
    **Option B: Local Development:**
