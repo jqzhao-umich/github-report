@@ -3,6 +3,7 @@
 import asyncio
 import json
 import httpx
+import requests
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from mcp.server.models import InitializationOptions
@@ -598,6 +599,12 @@ async def github_report_api():
     if not ORG_NAME:
         return "GitHub organization name not set in environment. Please set GITHUB_ORG_NAME environment variable."
     
+    # Record start time in Detroit timezone (UTC-4)
+    from datetime import datetime, timezone, timedelta
+    detroit_tz = timezone(timedelta(hours=-4))  # Detroit is UTC-4
+    request_start_time = datetime.now(detroit_tz)
+    print(f"Request received at: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}")
+
     # Get current iteration information from GitHub Projects
     iteration_info = None
     try:
@@ -609,7 +616,7 @@ async def github_report_api():
     try:
         # Test GitHub connection with timeout
         import asyncio
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone, timedelta
         g = Github(GITHUB_TOKEN, timeout=5)  # Short timeout for testing
         
         # Test the connection by getting user info
@@ -633,7 +640,35 @@ async def github_report_api():
         except Exception as e:
             return f"Error getting organization members: {str(e)}"
         
-        member_stats = {m.login: {"commits": 0, "assigned_issues": 0, "closed_issues": 0} for m in members}
+        # Build member stats and email mapping
+        member_stats = {}
+        email_to_login = {}
+        commit_details = {}
+        assigned_issues = {}
+        closed_issues = {}
+        
+        for member in members:
+            member_stats[member.login] = {"commits": 0, "assigned_issues": 0, "closed_issues": 0}
+            commit_details[member.login] = []
+            assigned_issues[member.login] = []
+            closed_issues[member.login] = []
+            try:
+                # Get user details including email
+                user = g.get_user(member.login)
+                if user.email:  # Primary email
+                    email_to_login[user.email.lower()] = member.login
+                # Get all emails if we have permission
+                try:
+                    emails = user.get_emails()
+                    for email in emails:
+                        if email.verified:  # Only use verified emails
+                            email_to_login[email.email.lower()] = member.login
+                except:
+                    pass  # Skip if we don't have permission to see emails
+            except Exception as e:
+                print(f"Error getting emails for {member.login}: {e}")
+        
+        print(f"Found {len(email_to_login)} email mappings for {len(member_stats)} members")
         
         # Filter by iteration dates if available
         iteration_start = None
@@ -651,21 +686,33 @@ async def github_report_api():
         total_commits_processed = 0
         total_issues_processed = 0
         for repo in org.get_repos():
+            # Skip archived repositories
+            if repo.archived:
+                print(f"Skipping archived repository: {repo.name}")
+                continue
+                
             repo_count += 1
             # Removed artificial limit to process all repositories
                 
             # Commits per user from all branches (filtered by iteration if available)
             try:
-                commit_count = 0
                 # Get all branches for this repository
                 branches = repo.get_branches()
+                processed_commits = set()  # Track unique commits across branches
+                
                 for branch in branches:
                     try:
-                        for commit in repo.get_commits(sha=branch.name):
-                            commit_count += 1
+                        print(f"Processing branch {branch.name} in {repo.name}")
+                        # Use since parameter to limit to relevant commits if iteration dates are set
+                        since = iteration_start if iteration_start else None
+                        until = iteration_end if iteration_end else None
+                        
+                        for commit in repo.get_commits(sha=branch.name, since=since, until=until):
+                            # Skip if we've already processed this commit from another branch
+                            if commit.sha in processed_commits:
+                                continue
+                            processed_commits.add(commit.sha)
                             total_commits_processed += 1
-                            if commit_count > 1000:  # Increased limit to 1000 commits per repo
-                                break
                             
                             # Filter by iteration dates if available
                             if iteration_start and iteration_end:
@@ -691,14 +738,57 @@ async def github_report_api():
                                     # Skip commits with invalid author data
                                     continue
                             
+                            # Try to match the commit to a member
+                            matched = False
+                            commit_info = {
+                                'repo': repo.name,
+                                'message': commit.commit.message.split('\n')[0],  # First line of commit message
+                                'date': commit.commit.author.date,
+                                'sha': commit.sha[:7],
+                                'branch': branch.name
+                            }
+                            
+                            # First try GitHub API author if available
                             if commit.author and hasattr(commit.author, 'login') and commit.author.login in member_stats:
-                                member_stats[commit.author.login]["commits"] += 1
+                                login = commit.author.login
+                                member_stats[login]["commits"] += 1
+                                commit_details[login].append(commit_info)
+                                matched = True
+                                print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
+                                continue  # Move to next commit since we found a match
+                            
+                            # Try email mapping
+                            if hasattr(commit.commit.author, 'email') and commit.commit.author.email:
+                                author_email = commit.commit.author.email.lower()
+                                if author_email in email_to_login:
+                                    member_login = email_to_login[author_email]
+                                    member_stats[member_login]["commits"] += 1
+                                    commit_details[member_login].append(commit_info)
+                                    matched = True
+                                    print(f"Matched commit {commit.sha[:7]} on {branch.name} to {member_login} via email {author_email}")
+                                    continue  # Move to next commit since we found a match
+                                
+                                # Try to match by username in email
+                                email_username = author_email.split('@')[0]
+                                for member_login in member_stats.keys():
+                                    if member_login.lower() in email_username.lower() or email_username.lower() in member_login.lower():
+                                        member_stats[member_login]["commits"] += 1
+                                        commit_details[member_login].append(commit_info)
+                                        matched = True
+                                        print(f"Matched commit {commit.sha[:7]} on {branch.name} to {member_login} via username in email {author_email}")
+                                        break
+                                
+                                if matched:
+                                    continue  # Move to next commit since we found a match
+                            
+                            # If still not matched, log it for debugging
+                            author_name = commit.commit.author.name if commit.commit.author else "Unknown"
+                            author_email = commit.commit.author.email if commit.commit.author else "Unknown"
+                            print(f"Unmatched commit {commit.sha[:7]} on {branch.name} by {author_name} <{author_email}>")
+                            
                     except Exception as e:
                         print(f"Error getting commits for branch {branch.name} in {repo.name}: {e}")
                         continue
-                        
-                    if commit_count > 1000:  # Stop if we hit the limit
-                        break
             except Exception as e:
                 print(f"Error getting branches for {repo.name}: {e}")
                 continue
@@ -716,57 +806,81 @@ async def github_report_api():
                     # Track assignees for both open and closed issues
                     for assignee in issue.assignees:
                         if assignee.login in member_stats:
-                            # For open issues: check if assigned during iteration
-                            if issue.state == "open":
-                                # Use assignment date if available, otherwise creation date
-                                assignment_date = getattr(issue, 'assigned_at', None) or issue.created_at
-                                if assignment_date.tzinfo is None:
-                                    from datetime import timezone
-                                    assignment_date = assignment_date.replace(tzinfo=timezone.utc)
-                                
-                                if iteration_start and iteration_end:
-                                    # Ensure iteration dates are timezone-aware
-                                    if iteration_start.tzinfo is None:
-                                        from datetime import timezone
-                                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
-                                    if iteration_end.tzinfo is None:
-                                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                                    
-                                    if iteration_start <= assignment_date <= iteration_end:
-                                        member_stats[assignee.login]["assigned_issues"] += 1
-                                        print(f"Found assigned issue in iteration: {issue.title[:50]}... assigned to {assignee.login}")
-                                else:
-                                    # If no iteration filtering, count all assigned issues
-                                    member_stats[assignee.login]["assigned_issues"] += 1
+                            # Track both open and closed issues for each user
+                            from datetime import timezone
                             
-                            # For closed issues: check if closed during iteration
-                            elif issue.state == "closed":
-                                # Use closed date if available, otherwise creation date
-                                closed_date = getattr(issue, 'closed_at', None) or issue.created_at
+                            # Get assignment date
+                            assignment_date = getattr(issue, 'assigned_at', None) or issue.created_at
+                            if assignment_date.tzinfo is None:
+                                assignment_date = assignment_date.replace(tzinfo=timezone.utc)
+                            
+                            # Get closed date if applicable
+                            closed_date = None
+                            if issue.state == "closed" and issue.closed_at:
+                                closed_date = issue.closed_at
                                 if closed_date.tzinfo is None:
-                                    from datetime import timezone
                                     closed_date = closed_date.replace(tzinfo=timezone.utc)
+                            
+                            # Make iteration dates timezone-aware if needed
+                            if iteration_start and iteration_end:
+                                if iteration_start.tzinfo is None:
+                                    iteration_start = iteration_start.replace(tzinfo=timezone.utc)
+                                if iteration_end.tzinfo is None:
+                                    iteration_end = iteration_end.replace(tzinfo=timezone.utc)
                                 
-                                if iteration_start and iteration_end:
-                                    # Ensure iteration dates are timezone-aware
-                                    if iteration_start.tzinfo is None:
-                                        from datetime import timezone
-                                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
-                                    if iteration_end.tzinfo is None:
-                                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                                    
-                                    if iteration_start <= closed_date <= iteration_end:
-                                        member_stats[assignee.login]["closed_issues"] += 1
-                                        print(f"Found closed issue in iteration: {issue.title[:50]}... closed by {assignee.login}")
-                                else:
-                                    # If no iteration filtering, count all closed issues
+                                # Check if issue was assigned during iteration
+                                if iteration_start <= assignment_date <= iteration_end:
+                                    member_stats[assignee.login]["assigned_issues"] += 1
+                                    assigned_issues[assignee.login].append({
+                                        'repo': repo.name,
+                                        'number': issue.number,
+                                        'title': issue.title,
+                                        'state': issue.state,
+                                        'assigned_date': assignment_date
+                                    })
+                                    print(f"Found assigned issue in iteration: {issue.title[:50]}... assigned to {assignee.login}")
+                                
+                                # Check if issue was closed during iteration
+                                if closed_date and iteration_start <= closed_date <= iteration_end:
+                                    member_stats[assignee.login]["closed_issues"] += 1
+                                    closed_issues[assignee.login].append({
+                                        'repo': repo.name,
+                                        'number': issue.number,
+                                        'title': issue.title,
+                                        'closed_date': closed_date
+                                    })
+                                    print(f"Found closed issue in iteration: {issue.title[:50]}... closed by {assignee.login}")
+                            else:
+                                # If no iteration filter, count all issues
+                                member_stats[assignee.login]["assigned_issues"] += 1
+                                assigned_issues[assignee.login].append({
+                                    'repo': repo.name,
+                                    'number': issue.number,
+                                    'title': issue.title,
+                                    'state': issue.state,
+                                    'assigned_date': assignment_date
+                                })
+                                
+                                if closed_date:
+                                    member_stats[assignee.login]["closed_issues"] += 1
+                                    closed_issues[assignee.login].append({
+                                        'repo': repo.name,
+                                        'number': issue.number,
+                                        'title': issue.title,
+                                        'closed_date': closed_date
+                                    })
                                     member_stats[assignee.login]["closed_issues"] += 1
             except Exception as e:
                 print(f"Error getting issues for {repo.name}: {e}")
                 continue
         
         # Build report with iteration information
-        report = ["hello world\n", f"GitHub Organization: {ORG_NAME}\n"]
+        detroit_tz = timezone(timedelta(hours=-4))  # Detroit is UTC-4
+        report_start_time = datetime.now(detroit_tz)
+        report = [
+            f"GitHub Organization: {ORG_NAME}",
+            f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}\n"
+        ]
         
         # Add iteration information at the beginning
         if iteration_info:
@@ -791,11 +905,51 @@ async def github_report_api():
         report.append(f"Total issues processed: {total_issues_processed}")
         if iteration_start and iteration_end:
             report.append(f"Filtered by iteration: {iteration_start.strftime('%Y-%m-%d')} to {iteration_end.strftime('%Y-%m-%d')}")
-        report.append("")
+        
+        # Summary section
+        report.append("\nSUMMARY")
+        report.append("=" * 60)
         report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13}")
         report.append("-"*65)
         for login, stats in member_stats.items():
             report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
+        
+        # Detailed section for each member
+        report.append("\nDETAILED ACTIVITY")
+        report.append("=" * 60)
+        
+        for login, stats in member_stats.items():
+            if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
+                report.append(f"\nUser: {login}")
+                report.append("-" * 40)
+                
+                # List commits
+                if stats['commits'] > 0:
+                    report.append("\nCommits:")
+                    for commit_info in commit_details.get(login, []):
+                        report.append(f"- [{commit_info['repo']}] {commit_info['message']} ({commit_info['date'].strftime('%Y-%m-%d')})")
+                
+                # List assigned issues
+                if stats['assigned_issues'] > 0:
+                    report.append("\nAssigned Issues:")
+                    for issue_info in assigned_issues.get(login, []):
+                        status = "Open" if issue_info['state'] == "open" else "Closed"
+                        report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} ({status})")
+                
+                # List closed issues
+                if stats['closed_issues'] > 0:
+                    report.append("\nClosed Issues:")
+                    for issue_info in closed_issues.get(login, []):
+                        report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} (Closed on {issue_info['closed_date'].strftime('%Y-%m-%d')})")
+                
+                report.append("")  # Empty line for spacing
+        
+        # Add report completion time
+        report_end_time = datetime.now(detroit_tz)
+        report.append("=" * 60)
+        report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}")
+        report.append(f"Generation time: {(report_end_time - request_start_time).total_seconds():.2f} seconds")
+        
         return "\n".join(report)
         
     except Exception as e:

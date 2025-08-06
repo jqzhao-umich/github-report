@@ -14,7 +14,8 @@ COPY src/ ./src/
 
 # Install Python dependencies
 RUN pip install --upgrade pip && \
-    pip install -e .
+    pip install -e . && \
+    pip install requests PyGithub
 
 # Set environment variables
 ENV PYTHONPATH=/app/src
