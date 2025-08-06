@@ -1,0 +1,24 @@
+{
+    "data": {
+        "node": {
+            "fields": {
+                "nodes": [
+                    {
+                        "id": "ITR_123",
+                        "name": "Iteration",
+                        "configuration": {
+                            "iterations": [
+                                {
+                                    "id": "1",
+                                    "title": "Sprint 1",
+                                    "startDate": "2025-08-01",
+                                    "duration": 14
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}
