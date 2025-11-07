@@ -7,7 +7,8 @@ This agent handles basic note operations and state management. It provides the f
 - Prompt generation and customization
 """
 
-from mcp.server.models import types
+from mcp import Tool, Resource
+from mcp.shared.types import TextContent, ImageContent, EmbeddedResource
 from pydantic import AnyUrl
 from mcp.server import Server
 import json

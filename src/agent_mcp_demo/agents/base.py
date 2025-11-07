@@ -2,9 +2,14 @@
 Base MCP agent implementation with common functionality
 """
 
-from mcp.server import Server
-from mcp.server.models import InitializationOptions, types
-from mcp.server import NotificationOptions
+import logging
+import asyncio
+from typing import Optional, Any, List, Union
+from mcp import Server
+from mcp.types import (
+    TextContent, InitializeResult, ServerCapabilities, 
+    NotificationOptions, Tool, Resource
+)
 import logging
 from typing import Optional, Any
 import asyncio

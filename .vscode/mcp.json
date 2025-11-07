@@ -2,22 +2,22 @@
   "servers": {
     "core-agent": {
       "type": "stdio",
-      "command": "/Users/jqzhao/projects/copilot-aidevday-2025/.venv/bin/python",
+      "command": "${workspaceFolder}/venv/bin/python",
       "args": ["-m", "agent_mcp_demo.agents.core_agent"]
     },
     "github-agent": {
       "type": "stdio",
-      "command": "/Users/jqzhao/projects/copilot-aidevday-2025/.venv/bin/python",
+      "command": "${workspaceFolder}/venv/bin/python",
       "args": ["-m", "agent_mcp_demo.agents.github_agent"]
     },
     "web-interface-agent": {
       "type": "stdio",
-      "command": "/Users/jqzhao/projects/copilot-aidevday-2025/.venv/bin/python",
+      "command": "${workspaceFolder}/venv/bin/python",
       "args": ["-m", "agent_mcp_demo.agents.web_interface_agent"]
     },
     "main-coordinator": {
       "type": "stdio",
-      "command": "/Users/jqzhao/projects/copilot-aidevday-2025/.venv/bin/python",
+      "command": "${workspaceFolder}/venv/bin/python",
       "args": ["-m", "agent_mcp_demo.agents.main_coordinator"]
     }
   }
