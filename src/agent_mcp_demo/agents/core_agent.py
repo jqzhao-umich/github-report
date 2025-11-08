@@ -7,11 +7,10 @@ This agent handles basic note operations and state management. It provides the f
 - Prompt generation and customization
 """
 
-from mcp.types import Tool, Resource, TextContent, ImageContent, EmbeddedResource
+from mcp import Tool, Resource
+from mcp.shared.types import TextContent, ImageContent, EmbeddedResource
 from pydantic import AnyUrl
-from mcp.server import Server, NotificationOptions
-from mcp.server.models import InitializationOptions
-import mcp.types as types
+from mcp.server import Server
 import json
 from typing import Dict, List, Optional
 
@@ -56,10 +55,8 @@ async def handle_read_resource(uri: AnyUrl) -> str:
     name = uri.path
     if name is not None:
         name = name.lstrip("/")
-        if name not in notes:
-            raise ValueError(f"Note not found: {name}")
         return notes[name]
-    raise ValueError(f"Invalid URI: missing note name")
+    raise ValueError(f"Note not found: {name}")
 
 @server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
@@ -141,10 +138,6 @@ async def handle_call_tool(
     Handle tool execution requests.
     Tools can modify server state and notify clients of changes.
     """
-    # Check for unknown tools first
-    if name != "add-note":
-        raise ValueError(f"Unknown tool: {name}")
-    
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -154,21 +147,20 @@ async def handle_call_tool(
         if not note_name or not content:
             raise ValueError("Missing name or content")
         notes[note_name] = content
-        # Only send notification if we're in an MCP request context
-        try:
-            await server.request_context.session.send_resource_list_changed()
-        except (LookupError, AttributeError):
-            # Not in an MCP request context (e.g., during testing)
-            pass
+        await server.request_context.session.send_resource_list_changed()
         return [
             types.TextContent(
                 type="text",
                 text=f"Added note '{note_name}' with content: {content}",
             )
         ]
+    else:
+        raise ValueError(f"Unknown tool: {name}")
 
 async def main():
     from mcp.server.stdio import stdio_server
+    from mcp.server.models import InitializationOptions
+    from mcp.server import NotificationOptions
     
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
