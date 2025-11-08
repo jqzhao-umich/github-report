@@ -163,20 +163,16 @@ class TestCoreAgentTools:
     @pytest.mark.asyncio
     async def test_add_note_success(self, clear_notes):
         """Test adding a note successfully"""
-        # Mock the server request context if it exists
-        mock_notify = AsyncMock()
-        with patch('agent_mcp_demo.agents.core_agent.server.request_context', create=True) as mock_ctx:
-            if hasattr(mock_ctx, 'session'):
-                mock_ctx.session.send_resource_list_changed = mock_notify
-            result = await handle_call_tool("add-note", {
-                "name": "test-note",
-                "content": "Test content"
-            })
-            
-            assert len(result) > 0
-            assert "test-note" in notes
-            assert notes["test-note"] == "Test content"
-            assert "Added note" in result[0].text
+        # The code already handles the LookupError, so we don't need to mock
+        result = await handle_call_tool("add-note", {
+            "name": "test-note",
+            "content": "Test content"
+        })
+        
+        assert len(result) > 0
+        assert "test-note" in notes
+        assert notes["test-note"] == "Test content"
+        assert "Added note" in result[0].text
     
     @pytest.mark.asyncio
     async def test_add_note_missing_name(self, clear_notes):
@@ -201,13 +197,14 @@ class TestCoreAgentTools:
         """Test overwriting existing note"""
         notes["test-note"] = "Old content"
         
-        with patch('agent_mcp_demo.agents.core_agent.server.request_context', create=True):
-            result = await handle_call_tool("add-note", {
-                "name": "test-note",
-                "content": "New content"
-            })
-            
-            assert notes["test-note"] == "New content"
+        # The code already handles the LookupError, so we don't need to mock
+        result = await handle_call_tool("add-note", {
+            "name": "test-note",
+            "content": "New content"
+        })
+        
+        assert notes["test-note"] == "New content"
+        assert "New content" in result[0].text
     
     @pytest.mark.asyncio
     async def test_unknown_tool(self, clear_notes):
@@ -221,12 +218,11 @@ class TestCoreAgentIntegration:
     @pytest.mark.asyncio
     async def test_add_and_read_note_flow(self, clear_notes):
         """Test the complete flow of adding and reading a note"""
-        # Add a note
-        with patch('agent_mcp_demo.agents.core_agent.server.request_context', create=True):
-            await handle_call_tool("add-note", {
-                "name": "integration-test",
-                "content": "Integration test content"
-            })
+        # Add a note (code already handles context errors)
+        await handle_call_tool("add-note", {
+            "name": "integration-test",
+            "content": "Integration test content"
+        })
         
         # List resources
         resources = await handle_list_resources()
@@ -246,20 +242,19 @@ class TestCoreAgentIntegration:
     @pytest.mark.asyncio
     async def test_multiple_notes_workflow(self, clear_notes):
         """Test workflow with multiple notes"""
-        # Add multiple notes
-        with patch('agent_mcp_demo.agents.core_agent.server.request_context', create=True):
-            await handle_call_tool("add-note", {
-                "name": "note1",
-                "content": "Content 1"
-            })
-            await handle_call_tool("add-note", {
-                "name": "note2",
-                "content": "Content 2"
-            })
-            await handle_call_tool("add-note", {
-                "name": "note3",
-                "content": "Content 3"
-            })
+        # Add multiple notes (code already handles context errors)
+        await handle_call_tool("add-note", {
+            "name": "note1",
+            "content": "Content 1"
+        })
+        await handle_call_tool("add-note", {
+            "name": "note2",
+            "content": "Content 2"
+        })
+        await handle_call_tool("add-note", {
+            "name": "note3",
+            "content": "Content 3"
+        })
         
         # List all resources
         resources = await handle_list_resources()
@@ -295,21 +290,19 @@ class TestCoreAgentErrorHandling:
     @pytest.mark.asyncio
     async def test_special_characters_in_note(self, clear_notes):
         """Test adding note with special characters"""
-        with patch('agent_mcp_demo.agents.core_agent.server.request_context', create=True):
-            result = await handle_call_tool("add-note", {
-                "name": "special-note",
-                "content": "Content with \n newlines and \t tabs and \"quotes\""
-            })
-            
-            assert notes["special-note"] == "Content with \n newlines and \t tabs and \"quotes\""
+        result = await handle_call_tool("add-note", {
+            "name": "special-note",
+            "content": "Content with \n newlines and \t tabs and \"quotes\""
+        })
+        
+        assert notes["special-note"] == "Content with \n newlines and \t tabs and \"quotes\""
     
     @pytest.mark.asyncio
     async def test_unicode_in_note(self, clear_notes):
         """Test adding note with unicode characters"""
-        with patch('agent_mcp_demo.agents.core_agent.server.request_context', create=True):
-            result = await handle_call_tool("add-note", {
-                "name": "unicode-note",
-                "content": "Content with émojis 🚀 and 中文"
-            })
-            
-            assert notes["unicode-note"] == "Content with émojis 🚀 and 中文"
+        result = await handle_call_tool("add-note", {
+            "name": "unicode-note",
+            "content": "Content with émojis 🚀 and 中文"
+        })
+        
+        assert notes["unicode-note"] == "Content with émojis 🚀 and 中文"

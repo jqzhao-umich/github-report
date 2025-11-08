@@ -1,9 +1,10 @@
-from mcp.server.models import types
+import mcp.types as types
 import os
 import json
 import requests
 from datetime import datetime, timezone, timedelta
-from mcp.server import Server
+from mcp.server import Server, NotificationOptions
+from mcp.server.models import InitializationOptions
 try:
     from github import Github
 except ImportError:
@@ -65,78 +66,81 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
         
         if not target_project:
             print(f"Project '{project_name}' not found in organization '{org_name}'")
-            return None
+            print(f"Available projects: {[p.get('title') for p in projects]}")
+            # Fall through to environment variable fallback
+        else:
+            print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
             
-        # Get project fields
-        fields_query = """
-        query($projectId: ID!) {
-          node(id: $projectId) {
-            ... on ProjectV2 {
-              fields(first: 50) {
-                nodes {
-                  ... on ProjectV2Field {
-                    id
-                    name
-                    dataType
-                  }
-                  ... on ProjectV2IterationField {
-                    id
-                    name
-                    configuration {
-                      iterations {
+            # Get project fields
+            fields_query = """
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  fields(first: 50) {
+                    nodes {
+                      ... on ProjectV2Field {
                         id
-                        title
-                        startDate
-                        duration
+                        name
+                        dataType
+                      }
+                      ... on ProjectV2IterationField {
+                        id
+                        name
+                        configuration {
+                          iterations {
+                            id
+                            title
+                            startDate
+                            duration
+                          }
+                        }
                       }
                     }
                   }
                 }
               }
             }
-          }
-        }
-        """
-        
-        fields_response = requests.post(
-            'https://api.github.com/graphql',
-            headers=headers,
-            json={'query': fields_query, 'variables': {"projectId": target_project['id']}}
-        )
-        
-        if fields_response.status_code == 200:
-            fields_data = fields_response.json()
-            if 'data' in fields_data and fields_data['data']['node']:
-                fields = fields_data['data']['node']['fields']['nodes']
-                
-                for field in fields:
-                    if (field.get('__typename') == 'ProjectV2IterationField' or 
-                        field.get('name', '').lower() == 'iteration'):
-                        
-                        if 'configuration' in field and 'iterations' in field['configuration']:
-                            iterations = field['configuration']['iterations']
-                            if iterations:
-                                today = datetime.now().date()
-                                current_iteration = None
-                                
-                                for iteration in iterations:
-                                    start_date = datetime.fromisoformat(iteration['startDate']).date()
-                                    end_date = start_date + timedelta(days=iteration['duration'])
+            """
+            
+            fields_response = requests.post(
+                'https://api.github.com/graphql',
+                headers=headers,
+                json={'query': fields_query, 'variables': {"projectId": target_project['id']}}
+            )
+            
+            if fields_response.status_code == 200:
+                fields_data = fields_response.json()
+                if 'data' in fields_data and fields_data['data']['node']:
+                    fields = fields_data['data']['node']['fields']['nodes']
+                    
+                    for field in fields:
+                        if (field.get('__typename') == 'ProjectV2IterationField' or 
+                            field.get('name', '').lower() == 'iteration'):
+                            
+                            if 'configuration' in field and 'iterations' in field['configuration']:
+                                iterations = field['configuration']['iterations']
+                                if iterations:
+                                    today = datetime.now().date()
+                                    current_iteration = None
                                     
-                                    if start_date <= today <= end_date:
-                                        current_iteration = iteration
-                                        break
-                                
-                                if current_iteration:
-                                    start_date = datetime.fromisoformat(current_iteration['startDate'])
-                                    end_date = start_date + timedelta(days=current_iteration['duration'])
+                                    for iteration in iterations:
+                                        start_date = datetime.fromisoformat(iteration['startDate']).date()
+                                        end_date = start_date + timedelta(days=iteration['duration'])
+                                        
+                                        if start_date <= today <= end_date:
+                                            current_iteration = iteration
+                                            break
                                     
-                                    return {
-                                        'name': current_iteration['title'],
-                                        'start_date': start_date.isoformat(),
-                                        'end_date': end_date.isoformat(),
-                                        'path': f"{org_name}/{project_name}"
-                                    }
+                                    if current_iteration:
+                                        start_date = datetime.fromisoformat(current_iteration['startDate'])
+                                        end_date = start_date + timedelta(days=current_iteration['duration'])
+                                        
+                                        return {
+                                            'name': current_iteration['title'],
+                                            'start_date': start_date.isoformat(),
+                                            'end_date': end_date.isoformat(),
+                                            'path': f"{org_name}/{project_name}"
+                                        }
         
         # Fall back to environment variables
         iteration_start = os.environ.get("GITHUB_ITERATION_START")
@@ -210,6 +214,11 @@ class GitHubAccessError(GitHubError):
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+    # Check for unknown tools first
+    valid_tools = ["get-iteration-info", "get-github-data"]
+    if name not in valid_tools:
+        raise ValueError(f"Unknown tool: {name}")
+    
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -347,13 +356,9 @@ async def handle_call_tool(
                 "closed_issues": closed_issues
             })
         )]
-    else:
-        raise ValueError(f"Unknown tool: {name}")
 
 async def main():
     from mcp.server.stdio import stdio_server
-    from mcp.server.models import InitializationOptions
-    from mcp.server import NotificationOptions
     
     async with stdio_server() as (read_stream, write_stream):
         await server.run(

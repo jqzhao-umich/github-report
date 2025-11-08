@@ -181,96 +181,80 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
         if not target_project:
             print(f"Project '{project_name}' not found in organization '{org_name}'")
             print(f"Available projects: {[p.get('title') for p in projects]}")
-            return None
-        
-        print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
-        
-        # Try to get project fields using GraphQL
-        fields_query = """
-        query($projectId: ID!) {
-          node(id: $projectId) {
-            ... on ProjectV2 {
-              fields(first: 50) {
-                nodes {
-                  ... on ProjectV2Field {
-                    id
-                    name
-                    dataType
-                  }
-                  ... on ProjectV2IterationField {
-                    id
-                    name
-                    configuration {
-                      iterations {
+            # Fall through to environment variable fallback
+        else:
+            print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
+            
+            # Try to get project fields using GraphQL
+            fields_query = """
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  fields(first: 50) {
+                    nodes {
+                      ... on ProjectV2Field {
                         id
-                        title
-                        startDate
-                        duration
+                        name
+                        dataType
+                      }
+                      ... on ProjectV2IterationField {
+                        id
+                        name
+                        configuration {
+                          iterations {
+                            id
+                            title
+                            startDate
+                            duration
+                          }
+                        }
                       }
                     }
                   }
                 }
               }
             }
-          }
-        }
-        """
-        
-        fields_variables = {
-            "projectId": target_project.get('id')
-        }
-        
-        fields_response = requests.post(
-            'https://api.github.com/graphql',
-            headers=headers,
-            json={'query': fields_query, 'variables': fields_variables}
-        )
-        
-        print(f"Fields response status: {fields_response.status_code}")
-        if fields_response.status_code == 200:
-            fields_data = fields_response.json()
-            print(f"Fields response: {json.dumps(fields_data, indent=2)}")
+            """
             
-            if 'data' in fields_data and fields_data['data']['node']:
-                fields = fields_data['data']['node']['fields']['nodes']
-                print(f"Found {len(fields)} project fields")
+            fields_variables = {
+                "projectId": target_project.get('id')
+            }
+            
+            fields_response = requests.post(
+                'https://api.github.com/graphql',
+                headers=headers,
+                json={'query': fields_query, 'variables': fields_variables}
+            )
+            
+            print(f"Fields response status: {fields_response.status_code}")
+            if fields_response.status_code == 200:
+                fields_data = fields_response.json()
+                print(f"Fields response: {json.dumps(fields_data, indent=2)}")
                 
-                # Look for iteration fields
-                for field in fields:
-                    print(f"Field type: {field.get('__typename')}, name: {field.get('name')}")
+                if 'data' in fields_data and fields_data['data']['node']:
+                    fields = fields_data['data']['node']['fields']['nodes']
+                    print(f"Found {len(fields)} project fields")
                     
-                    # Check if this is an iteration field by name or type
-                    if (field.get('__typename') == 'ProjectV2IterationField' or 
-                        field.get('name', '').lower() == 'iteration'):
-                        print(f"Found iteration field: {json.dumps(field, indent=2)}")
+                    # Look for iteration fields
+                    for field in fields:
+                        print(f"Field type: {field.get('__typename')}, name: {field.get('name')}")
                         
-                        # Check if this field has configuration with iterations
-                        if 'configuration' in field and 'iterations' in field['configuration']:
-                            iterations = field['configuration']['iterations']
-                            print(f"Found {len(iterations)} iterations")
-                            if iterations:
-                                # Find the current iteration based on today's date
-                                from datetime import datetime, timedelta
-                                today = datetime.now().date()
-                                current_iteration = None
-                                
-                                for iteration in iterations:
-                                    start_date = iteration.get('startDate')
-                                    duration = iteration.get('duration')
+                        # Check if this is an iteration field by name or type
+                        if (field.get('__typename') == 'ProjectV2IterationField' or 
+                            field.get('name', '').lower() == 'iteration'):
+                            print(f"Found iteration field: {json.dumps(field, indent=2)}")
+                            
+                            # Check if this field has configuration with iterations
+                            if 'configuration' in field and 'iterations' in field['configuration']:
+                                iterations = field['configuration']['iterations']
+                                print(f"Found {len(iterations)} iterations")
+                                if iterations:
+                                    # Find the current iteration based on today's date
+                                    from datetime import datetime, timedelta
+                                    today = datetime.now().date()
+                                    current_iteration = None
                                     
-                                    if start_date and duration:
-                                        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
-                                        end_dt = start_dt + timedelta(days=duration)
-                                        
-                                        # Check if today falls within this iteration
-                                        if start_dt <= today <= end_dt:
-                                            current_iteration = iteration
-                                            print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
-                                            break
-                                
-                                # If no current iteration found, use the most recent past iteration
-                                if not current_iteration:
-                                    for iteration in reversed(iterations):
+                                    for iteration in iterations:
                                         start_date = iteration.get('startDate')
                                         duration = iteration.get('duration')
                                         
@@ -278,73 +262,73 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
                                             start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
                                             end_dt = start_dt + timedelta(days=duration)
                                             
-                                            # Use the most recent iteration that has ended
-                                            if end_dt < today:
+                                            # Check if today falls within this iteration
+                                            if start_dt <= today <= end_dt:
                                                 current_iteration = iteration
-                                                print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
                                                 break
-                                
-                                # If still no iteration found, use the first one (fallback)
-                                if not current_iteration and iterations:
-                                    current_iteration = iterations[0]
-                                    print(f"Using fallback iteration: {current_iteration.get('title')}")
-                                
-                                if current_iteration:
-                                    # Calculate end date from start date and duration
-                                    start_date = current_iteration.get('startDate')
-                                    duration = current_iteration.get('duration')
                                     
-                                    if start_date and duration:
-                                        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                                        end_dt = start_dt + timedelta(days=duration)
-                                        end_date = end_dt.isoformat()
-                                    else:
-                                        end_date = None
+                                    # If no current iteration found, use the most recent past iteration
+                                    if not current_iteration:
+                                        for iteration in reversed(iterations):
+                                            start_date = iteration.get('startDate')
+                                            duration = iteration.get('duration')
+                                            
+                                            if start_date and duration:
+                                                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                                                end_dt = start_dt + timedelta(days=duration)
+                                                
+                                                # Use the most recent iteration that has ended
+                                                if end_dt < today:
+                                                    current_iteration = iteration
+                                                    print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                    break
                                     
-                                    return {
-                                        'name': current_iteration.get('title', 'Current Sprint'),
-                                        'start_date': start_date,
-                                        'end_date': end_date,
-                                        'path': f"{org_name}/{project_name}"
-                                    }
-                        
-                        # If we found an iteration field but couldn't get configuration, 
-                        # try to get the field ID and query it separately
-                        field_id = field.get('id')
-                        if field_id:
-                            print(f"Trying to get iteration data for field ID: {field_id}")
+                                    # If still no iteration found, use the first one (fallback)
+                                    if not current_iteration and iterations:
+                                        current_iteration = iterations[0]
+                                        print(f"Using fallback iteration: {current_iteration.get('title')}")
+                                    
+                                    if current_iteration:
+                                        # Calculate end date from start date and duration
+                                        start_date = current_iteration.get('startDate')
+                                        duration = current_iteration.get('duration')
+                                        
+                                        if start_date and duration:
+                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                                            end_dt = start_dt + timedelta(days=duration)
+                                            end_date = end_dt.isoformat()
+                                        else:
+                                            end_date = None
+                                        
+                                        return {
+                                            'name': current_iteration.get('title', 'Current Sprint'),
+                                            'start_date': start_date,
+                                            'end_date': end_date,
+                                            'path': f"{org_name}/{project_name}"
+                                        }
                             
-                            # Try to get iteration data from the field response
-                            if 'data' in fields_data and 'node' in fields_data['data']:
-                                node_data = fields_data['data']['node']
-                                if 'fields' in node_data and 'nodes' in node_data['fields']:
-                                    for field_node in node_data['fields']['nodes']:
-                                        if field_node.get('__typename') == 'ProjectV2IterationField':
-                                            if 'configuration' in field_node and 'iterations' in field_node['configuration']:
-                                                iterations = field_node['configuration']['iterations']
-                                                if iterations:
-                                                    # Find the current iteration based on today's date
-                                                    from datetime import datetime, timedelta
-                                                    today = datetime.now().date()
-                                                    current_iteration = None
-                                                    
-                                                    for iteration in iterations:
-                                                        start_date = iteration.get('startDate')
-                                                        duration = iteration.get('duration')
+                            # If we found an iteration field but couldn't get configuration, 
+                            # try to get the field ID and query it separately
+                            field_id = field.get('id')
+                            if field_id:
+                                print(f"Trying to get iteration data for field ID: {field_id}")
+                                
+                                # Try to get iteration data from the field response
+                                if 'data' in fields_data and 'node' in fields_data['data']:
+                                    node_data = fields_data['data']['node']
+                                    if 'fields' in node_data and 'nodes' in node_data['fields']:
+                                        for field_node in node_data['fields']['nodes']:
+                                            if field_node.get('__typename') == 'ProjectV2IterationField':
+                                                if 'configuration' in field_node and 'iterations' in field_node['configuration']:
+                                                    iterations = field_node['configuration']['iterations']
+                                                    if iterations:
+                                                        # Find the current iteration based on today's date
+                                                        from datetime import datetime, timedelta
+                                                        today = datetime.now().date()
+                                                        current_iteration = None
                                                         
-                                                        if start_date and duration:
-                                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
-                                                            end_dt = start_dt + timedelta(days=duration)
-                                                            
-                                                            # Check if today falls within this iteration
-                                                            if start_dt <= today <= end_dt:
-                                                                current_iteration = iteration
-                                                                print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
-                                                                break
-                                                    
-                                                    # If no current iteration found, use the most recent past iteration
-                                                    if not current_iteration:
-                                                        for iteration in reversed(iterations):
+                                                        for iteration in iterations:
                                                             start_date = iteration.get('startDate')
                                                             duration = iteration.get('duration')
                                                             
@@ -352,42 +336,58 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
                                                                 start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
                                                                 end_dt = start_dt + timedelta(days=duration)
                                                                 
-                                                                # Use the most recent iteration that has ended
-                                                                if end_dt < today:
+                                                                # Check if today falls within this iteration
+                                                                if start_dt <= today <= end_dt:
                                                                     current_iteration = iteration
-                                                                    print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                                    print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
                                                                     break
-                                                    
-                                                    # If still no iteration found, use the first one (fallback)
-                                                    if not current_iteration and iterations:
-                                                        current_iteration = iterations[0]
-                                                        print(f"Using fallback iteration: {current_iteration.get('title')}")
-                                                    
-                                                    if current_iteration:
-                                                        # Calculate end date from start date and duration
-                                                        start_date = current_iteration.get('startDate')
-                                                        duration = current_iteration.get('duration')
-                                                    
-                                                    if start_date and duration:
-                                                        from datetime import datetime, timedelta
-                                                        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                                                        end_dt = start_dt + timedelta(days=duration)
-                                                        end_date = end_dt.isoformat()
-                                                    else:
-                                                        end_date = None
-                                                    
-                                                    return {
-                                                        'name': current_iteration.get('title', 'Current Sprint'),
-                                                        'start_date': start_date,
-                                                        'end_date': end_date,
-                                                        'path': f"{org_name}/{project_name}"
-                                                    }
-                            
-                            print("Iteration field found but configuration not accessible, falling back to environment variables")
+                                                        
+                                                        # If no current iteration found, use the most recent past iteration
+                                                        if not current_iteration:
+                                                            for iteration in reversed(iterations):
+                                                                start_date = iteration.get('startDate')
+                                                                duration = iteration.get('duration')
+                                                                
+                                                                if start_date and duration:
+                                                                    start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                                                                    end_dt = start_dt + timedelta(days=duration)
+                                                                    
+                                                                    # Use the most recent iteration that has ended
+                                                                    if end_dt < today:
+                                                                        current_iteration = iteration
+                                                                        print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                                        break
+                                                        
+                                                        # If still no iteration found, use the first one (fallback)
+                                                        if not current_iteration and iterations:
+                                                            current_iteration = iterations[0]
+                                                            print(f"Using fallback iteration: {current_iteration.get('title')}")
+                                                        
+                                                        if current_iteration:
+                                                            # Calculate end date from start date and duration
+                                                            start_date = current_iteration.get('startDate')
+                                                            duration = current_iteration.get('duration')
+                                                        
+                                                        if start_date and duration:
+                                                            from datetime import datetime, timedelta
+                                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                                                            end_dt = start_dt + timedelta(days=duration)
+                                                            end_date = end_dt.isoformat()
+                                                        else:
+                                                            end_date = None
+                                                        
+                                                        return {
+                                                            'name': current_iteration.get('title', 'Current Sprint'),
+                                                            'start_date': start_date,
+                                                            'end_date': end_date,
+                                                            'path': f"{org_name}/{project_name}"
+                                                        }
+                                
+                                print("Iteration field found but configuration not accessible, falling back to environment variables")
+                else:
+                    print(f"No project data found in response")
             else:
-                print(f"No project data found in response")
-        else:
-            print(f"Fields request failed: {fields_response.status_code} - {fields_response.text}")
+                print(f"Fields request failed: {fields_response.status_code} - {fields_response.text}")
         
         # Fall back to environment variables
         iteration_start = os.environ.get("GITHUB_ITERATION_START")
@@ -440,8 +440,10 @@ async def handle_read_resource(uri: AnyUrl) -> str:
     name = uri.path
     if name is not None:
         name = name.lstrip("/")
+        if name not in notes:
+            raise ValueError(f"Note not found: {name}")
         return notes[name]
-    raise ValueError(f"Note not found: {name}")
+    raise ValueError(f"Invalid URI: missing note name")
 
 @server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
@@ -545,6 +547,11 @@ async def handle_call_tool(
     Handle tool execution requests.
     Tools can modify server state and notify clients of changes.
     """
+    # Check for unknown tools first (before checking arguments)
+    valid_tools = ["add-note", "fetch-api-data", "read-json-file"]
+    if name not in valid_tools:
+        raise ValueError(f"Unknown tool: {name}")
+    
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -554,7 +561,12 @@ async def handle_call_tool(
         if not note_name or not content:
             raise ValueError("Missing name or content")
         notes[note_name] = content
-        await server.request_context.session.send_resource_list_changed()
+        # Only send notification if we're in an MCP request context
+        try:
+            await server.request_context.session.send_resource_list_changed()
+        except (LookupError, AttributeError):
+            # Not in an MCP request context (e.g., during testing)
+            pass
         return [
             types.TextContent(
                 type="text",
@@ -583,8 +595,6 @@ async def handle_call_tool(
                 text=f"Read data from file {filepath}: {json.dumps(data)[:500]}",
             )
         ]
-    else:
-        raise ValueError(f"Unknown tool: {name}")
 
 @app.get("/api/github-report", response_class=PlainTextResponse)
 async def github_report_api():

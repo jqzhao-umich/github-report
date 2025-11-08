@@ -8,8 +8,9 @@ It handles:
 - State synchronization
 """
 
-from mcp.server.models import types
-from mcp.server import Server
+import mcp.types as types
+from mcp.server import Server, NotificationOptions
+from mcp.server.models import InitializationOptions
 import os
 import asyncio
 from typing import Dict, List, Optional
@@ -46,6 +47,10 @@ async def handle_list_tools() -> list[types.Tool]:
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+    # Check for unknown tools first
+    if name != "get-github-report":
+        raise ValueError(f"Unknown tool: {name}")
+    
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -55,39 +60,46 @@ async def handle_call_tool(
             raise ValueError("Missing org_name")
         
         # Get iteration info from GitHub agent
-        iteration_info = await server.request_context.session.call_tool(
-            "github-agent",
-            "get-iteration-info",
-            {"org_name": org_name}
-        )
+        try:
+            iteration_info = await server.request_context.session.call_tool(
+                "github-agent",
+                "get-iteration-info",
+                {"org_name": org_name}
+            )
+        except (LookupError, AttributeError) as e:
+            raise AgentCommunicationError(f"Failed to communicate with github-agent: {e}")
         
         # Get GitHub data
-        github_data = await server.request_context.session.call_tool(
-            "github-agent",
-            "get-github-data",
-            {
-                "org_name": org_name,
-                "iteration_info": iteration_info[0].text if iteration_info else None
-            }
-        )
+        try:
+            github_data = await server.request_context.session.call_tool(
+                "github-agent",
+                "get-github-data",
+                {
+                    "org_name": org_name,
+                    "iteration_info": iteration_info[0].text if iteration_info else None
+                }
+            )
+        except (LookupError, AttributeError) as e:
+            raise AgentCommunicationError(f"Failed to communicate with github-agent: {e}")
         
         # Generate report using web interface agent
-        report = await server.request_context.session.call_tool(
-            "web-interface-agent",
-            "generate-report",
-            {
-                "org_name": org_name,
-                "iteration_info": iteration_info[0].text if iteration_info else None,
-                "github_data": github_data[0].text if github_data else None
-            }
-        )
+        try:
+            report = await server.request_context.session.call_tool(
+                "web-interface-agent",
+                "generate-report",
+                {
+                    "org_name": org_name,
+                    "iteration_info": iteration_info[0].text if iteration_info else None,
+                    "github_data": github_data[0].text if github_data else None
+                }
+            )
+        except (LookupError, AttributeError) as e:
+            raise AgentCommunicationError(f"Failed to communicate with web-interface-agent: {e}")
         
         return [types.TextContent(type="text", text=report[0].text if report else "No report generated")]
 
 async def main():
     from mcp.server.stdio import stdio_server
-    from mcp.server.models import InitializationOptions
-    from mcp.server import NotificationOptions
     
     async with stdio_server() as (read_stream, write_stream):
         await server.run(

@@ -3,7 +3,8 @@ Configuration management for MCP agents
 """
 
 from typing import Optional
-from pydantic import BaseSettings, AnyHttpUrl
+from pydantic_settings import BaseSettings
+from pydantic import AnyHttpUrl
 from pathlib import Path
 import json
 

@@ -3,9 +3,10 @@ from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
-from datetime import datetime
-from mcp.server.models import types
-from mcp.server import Server
+from datetime import datetime, timezone, timedelta
+import mcp.types as types
+from mcp.server import Server, NotificationOptions
+from mcp.server.models import InitializationOptions
 from .utils import get_detroit_timezone, get_env_var, format_datetime
 
 try:
@@ -125,30 +126,37 @@ async def github_report_api():
     if not ORG_NAME:
         return "GitHub organization name not set in environment. Please set GITHUB_ORG_NAME environment variable."
     
-    detroit_tz = timezone(timedelta(hours=-4))
+    detroit_tz = get_detroit_timezone()
     request_start_time = datetime.now(detroit_tz)
     
-    # Get data from GitHub agent
-    iteration_info = await server.request_context.session.call_tool(
-        "github-agent", 
-        "get-iteration-info",
-        {"org_name": ORG_NAME}
-    )
+    # Get data from GitHub agent (only if MCP context is available)
+    iteration_info = None
+    github_data = None
     
-    if isinstance(iteration_info, list) and len(iteration_info) > 0:
-        iteration_info = eval(iteration_info[0].text)
-    
-    github_data = await server.request_context.session.call_tool(
-        "github-agent",
-        "get-github-data",
-        {
-            "org_name": ORG_NAME,
-            "iteration_info": iteration_info
-        }
-    )
-    
-    if isinstance(github_data, list) and len(github_data) > 0:
-        github_data = eval(github_data[0].text)
+    try:
+        iteration_info_result = await server.request_context.session.call_tool(
+            "github-agent", 
+            "get-iteration-info",
+            {"org_name": ORG_NAME}
+        )
+        
+        if isinstance(iteration_info_result, list) and len(iteration_info_result) > 0:
+            iteration_info = eval(iteration_info_result[0].text)
+        
+        github_data_result = await server.request_context.session.call_tool(
+            "github-agent",
+            "get-github-data",
+            {
+                "org_name": ORG_NAME,
+                "iteration_info": iteration_info
+            }
+        )
+        
+        if isinstance(github_data_result, list) and len(github_data_result) > 0:
+            github_data = eval(github_data_result[0].text)
+    except (LookupError, AttributeError):
+        # MCP context not available - return error message
+        return "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
     
     # Generate report
     report = []
@@ -227,16 +235,14 @@ async def github_report():
 
 async def main():
     from mcp.server.stdio import stdio_server
-    from mcp.server.models import InitializationOptions
-    from mcp.server import NotificationOptions
     import os
     import uvicorn
     
     # Start FastAPI app in the background
     config = uvicorn.Config(app, host="0.0.0.0", port=8000)
-    server = uvicorn.Server(config)
+    uvicorn_server = uvicorn.Server(config)
     import asyncio
-    asyncio.create_task(server.serve())
+    asyncio.create_task(uvicorn_server.serve())
     
     # Run MCP server
     async with stdio_server() as (read_stream, write_stream):

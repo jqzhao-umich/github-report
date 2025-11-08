@@ -9,3 +9,10 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.pytest_cache/
