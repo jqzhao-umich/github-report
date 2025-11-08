@@ -82,7 +82,42 @@ GITHUB_ITERATION_NAME=Sprint 1
 
 ## Running the Server
 
-The server consists of multiple agents that need to run simultaneously. Open four terminal windows and run the following commands (make sure your virtual environment is activated in each):
+### Quick Start (Recommended)
+
+Use the provided `start.sh` script to manage all agents:
+
+```bash
+# Start all agents
+./start.sh start
+
+# Check status of all agents
+./start.sh status
+
+# Restart all agents
+./start.sh restart
+
+# Stop all agents
+./start.sh stop
+```
+
+The script provides:
+- 🔄 Automatic virtual environment setup
+- 📝 Individual agent logging (in `logs` directory)
+- 📊 Status monitoring
+- 🔍 Process management with PID files
+- 🧹 Clean process handling and shutdown
+
+All agent logs are stored in the `logs` directory:
+- `logs/core.log` - Core agent logs
+- `logs/github.log` - GitHub agent logs
+- `logs/web.log` - Web interface agent logs
+- `logs/coordinator.log` - Main coordinator logs
+
+Once started, access the web interface at: http://localhost:8000
+
+### Manual Start (Alternative)
+
+If you prefer to run agents manually, open four terminal windows and run the following commands (make sure your virtual environment is activated in each):
 
 1. Start the core agent:
    ```bash
@@ -104,7 +139,7 @@ The server consists of multiple agents that need to run simultaneously. Open fou
    python src/agent_mcp_demo/agents/main_coordinator.py
    ```
 
-Once all agents are running, access the web interface at: http://localhost:8000
+Note: The manual method doesn't provide the logging and process management features available in the start script.
 
 ## Development
 
@@ -543,7 +578,27 @@ docker-compose down
 
 ### Local Development
 
-For local development without Docker:
+For local development, you have two options:
+
+#### 1. Using the start script (Recommended)
+
+The `start.sh` script provides a developer-friendly environment:
+
+```bash
+# Start all agents with logging
+./start.sh start
+
+# Monitor agent status
+./start.sh status
+
+# View logs in real-time
+tail -f logs/*.log
+
+# Restart after code changes
+./start.sh restart
+```
+
+#### 2. Manual setup without Docker
 
 ```bash
 # Create virtual environment
@@ -553,7 +608,7 @@ source venv/bin/activate
 # Install dependencies
 pip install -e .
 
-# Start the server
+# Start the server (in separate terminals)
 python -m uvicorn src.agent_mcp_demo.server:app --reload --host 127.0.0.1 --port 8000
 ```
 
