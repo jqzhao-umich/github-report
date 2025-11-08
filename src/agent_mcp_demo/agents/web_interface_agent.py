@@ -446,13 +446,23 @@ async def github_report():
 @app.post("/api/reports/publish", response_class=JSONResponse)
 async def publish_report(background_tasks: BackgroundTasks):
     """
-    Publish the current report to both Git storage and GitHub Pages.
+    Publish the current report to GitHub Pages.
     The report will be generated and published asynchronously.
     """
     try:
-        # First check if MCP server is available
-        if not hasattr(server, "request_context") or not server.request_context or not server.request_context.session:
-            return JSONResponse({"error": "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."}, status_code=500)
+        from mcp.server.lowlevel.server import request_ctx
+        
+        # Check if MCP context is available
+        try:
+            ctx = request_ctx.get()
+            if not ctx or not ctx.session:
+                return JSONResponse({
+                    "error": "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
+                }, status_code=500)
+        except LookupError:
+            return JSONResponse({
+                "error": "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
+            }, status_code=500)
 
         report_text = await github_report_api()
         logger.info(f"Got report text: {report_text[:200]}...")
@@ -517,7 +527,16 @@ async def publish_report(background_tasks: BackgroundTasks):
                 logger.error(f"Error in background publish task: {e}", exc_info=True)
                 raise
             
-        background_tasks.add_task(publish_in_background)
+        # In test mode, run the task directly
+        test_mode = os.environ.get("TEST_MODE") == "true"
+        if test_mode:
+            try:
+                await publish_in_background()
+            except Exception as e:
+                # In test mode, log the error but don't let it affect the response
+                logger.error(f"Error in test mode background publish: {e}", exc_info=True)
+        else:
+            background_tasks.add_task(publish_in_background)
         
         return JSONResponse({
             "message": "Report generation started. It will be published shortly.",

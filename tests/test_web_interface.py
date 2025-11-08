@@ -1,5 +1,6 @@
 import os
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime
@@ -8,6 +9,24 @@ import json
 from agent_mcp_demo.agents.web_interface_agent import app, server
 from mcp.types import TextContent, ImageContent, EmbeddedResource
 
+from mcp.server.lowlevel.server import request_ctx, RequestContext
+
+
+
+def create_mock_server_context():
+    """Create a mock MCP server context."""
+    mock_session = AsyncMock()
+    mock_context = RequestContext(
+        session=mock_session,
+        request_id="test-request",
+        meta={},
+        lifespan_context=None,
+    )
+    return mock_context, mock_session
+
+# Create test client with MCP context
+mock_context, mock_session = create_mock_server_context()
+token = request_ctx.set(mock_context)
 client = TestClient(app)
 
 def create_mock_github_data():
@@ -68,19 +87,21 @@ def mock_env_vars():
 @pytest.fixture
 def mock_server_context():
     """Setup mock MCP server context with session."""
-    import asyncio
-    import contextvars
-    from mcp.server.lowlevel.server import request_ctx, RequestContext
-
-    mock_session = AsyncMock()
-    mock_context = RequestContext(
-        session=mock_session,
-        request_id="test-request",
-        meta={},
-        lifespan_context=None,
-    )
-
+    # Create new context for each test
+    mock_context, mock_session = create_mock_server_context()
     token = request_ctx.set(mock_context)
+    
+    # Configure default responses
+    mock_session.call_tool = AsyncMock()
+    mock_session.call_tool.side_effect = [
+        [TextContent(type="text", text=str({
+            'name': 'Sprint 1',
+            'start_date': '2025-11-01',
+            'end_date': '2025-11-15'
+        }))],
+        [TextContent(type="text", text=str(create_mock_github_data()))]
+    ]
+    
     yield mock_session
     request_ctx.reset(token)
 
@@ -105,7 +126,7 @@ def test_root_endpoint():
     assert 'class="action-btn primary-btn"' in response.text
     assert 'class="action-btn success-btn"' in response.text
 
-def test_github_report_endpoint_no_token():
+def test_github_report_endpoint_no_token(mock_server_context):
     # Remove token if it exists
     import os
     original_token = os.environ.pop("GITHUB_TOKEN", None)
@@ -119,7 +140,7 @@ def test_github_report_endpoint_no_token():
         if original_token:
             os.environ["GITHUB_TOKEN"] = original_token
 
-def test_github_report_endpoint_no_org():
+def test_github_report_endpoint_no_org(mock_server_context):
     # Set token but no org
     import os
     original_token = os.environ.pop("GITHUB_TOKEN", None)
@@ -220,10 +241,9 @@ async def test_publish_report_success(mock_env_vars, mock_server_context, mock_p
 @pytest.mark.asyncio
 async def test_publish_report_failure(mock_env_vars, mock_server_context, mock_publisher):
     """Test report publishing with failure."""
-    # Setup mock to raise an exception
-    mock_publisher.publish_report.side_effect = Exception("Failed to write report")
+    import logging
     
-    # Setup other mocks
+    # Setup mock responses for report generation
     mock_server_context.call_tool.side_effect = [
         [TextContent(type="text", text=str({
             'name': 'Sprint 1',
@@ -232,11 +252,37 @@ async def test_publish_report_failure(mock_env_vars, mock_server_context, mock_p
         }))],
         [TextContent(type="text", text=str(create_mock_github_data()))]
     ]
-
-    response = client.post("/api/reports/publish")
-    assert response.status_code == 500
-    data = response.json()
-    assert "Failed to publish report" in data["error"]
+    
+    # Setup the publisher to fail
+    mock_publisher.publish_report.side_effect = Exception("Failed to write report")
+    
+    # Log handler to capture log messages
+    log_messages = []
+    class TestLogHandler(logging.Handler):
+        def emit(self, record):
+            log_messages.append(record.getMessage())
+    
+    # Add test handler to logger
+    logger = logging.getLogger('web-interface-agent')
+    test_handler = TestLogHandler()
+    logger.addHandler(test_handler)
+    
+    try:
+        # Enable test mode to run background tasks synchronously
+        with patch.dict(os.environ, {"TEST_MODE": "true"}):
+            response = client.post("/api/reports/publish")
+            
+            # Initial response should be successful
+            assert response.status_code == 200
+            data = response.json()
+            assert "Report generation started" in data["message"]
+            
+            # Check that error was logged
+            error_logs = [msg for msg in log_messages if "Error in test mode background publish" in msg]
+            assert any("Failed to write report" in msg for msg in error_logs)
+    finally:
+        # Clean up test handler
+        logger.removeHandler(test_handler)
 
 @pytest.mark.asyncio
 async def test_publish_report_invalid_data(mock_env_vars, mock_server_context):
@@ -253,21 +299,32 @@ async def test_publish_report_invalid_data(mock_env_vars, mock_server_context):
     assert "Failed to parse GitHub data" in data["error"]
 
 @pytest.mark.asyncio
-async def test_missing_mcp_context(mock_env_vars):
+async def test_missing_mcp_context():
     """Test behavior when MCP context is missing."""
     from mcp.server.lowlevel.server import request_ctx
+    from fastapi.testclient import TestClient
+    from agent_mcp_demo.agents.web_interface_agent import app
     
-    # Clear any existing context
+    # Create a test client
+    test_client = TestClient(app)
+    
+    # Test with no context
     try:
-        request_ctx.get()
-        request_ctx.reset(request_ctx.set(None))
-    except LookupError:
-        pass
-
-    try:
-        response = client.post("/api/reports/publish")
+        token = request_ctx.set(None)
+        response = test_client.post("/api/reports/publish")
         assert response.status_code == 500
-        data = response.json()
-        assert "Failed to publish report: <ContextVar name='request_ctx'" in data["error"]
+        assert "MCP server context not available" in response.json()["error"]
     finally:
-        pass  # No need to restore context, it's managed by other fixtures
+        request_ctx.reset(token)
+        
+    # Test with empty context
+    class MockContext:
+        session = None
+        
+    try:
+        token = request_ctx.set(MockContext())
+        response = test_client.post("/api/reports/publish")
+        assert response.status_code == 500
+        assert "MCP server context not available" in response.json()["error"]
+    finally:
+        request_ctx.reset(token)
