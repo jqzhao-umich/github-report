@@ -15,7 +15,8 @@ pytest-cov==4.1.0
 pytest-env==1.0.1
 pytest-mock==3.11.1
 pytest-benchmark==4.0.0
-httpx==0.24.1
+# Using same httpx version as core dependencies
+httpx>=0.27.0
 psutil==5.9.5
 aioresponses==0.7.4
 responses==0.23.1

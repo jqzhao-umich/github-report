@@ -28,7 +28,11 @@ start_agent() {
 
     echo "🚀 Starting $name..."
     source "$VENV_DIR/bin/activate"
-    python "$script" > "$log_file" 2>&1 &
+    if [ "$name" = "web" ]; then
+        uvicorn agent_mcp_demo.agents.web_interface_agent:app --host 0.0.0.0 --port 8000 > "$log_file" 2>&1 &
+    else
+        PYTHONPATH=$PYTHONPATH:$(pwd)/src python -m agent_mcp_demo.agents.$(basename "${script%.*}") > "$log_file" 2>&1 &
+    fi
     echo $! > "$pid_file"
     echo "✅ $name started (PID: $(cat $pid_file))"
 }
@@ -72,13 +76,20 @@ show_status() {
 
 # Function to setup the environment
 setup_env() {
-    if [ ! -d "$VENV_DIR" ]; then
-        echo "🔧 Setting up virtual environment..."
-        python3 -m venv "$VENV_DIR"
-        source "$VENV_DIR/bin/activate"
-        pip install -r requirements.txt
-        echo "✅ Virtual environment setup complete"
-    fi
+    echo "🔧 Setting up virtual environment..."
+    rm -rf "$VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    pip install -e .
+    echo "✅ Virtual environment setup complete"
+}
+
+# Function to clean everything
+clean() {
+    echo "🧹 Cleaning up..."
+    rm -f "$LOG_DIR"/* "$PID_DIR"/* 2>/dev/null || true
+    rm -rf "$VENV_DIR"
+    echo "✨ Clean up complete"
 }
 
 # Main command handling
@@ -103,11 +114,19 @@ case "$1" in
         sleep 2
         $0 start
         ;;
+    clean)
+        $0 stop
+        clean
+        ;;
+    fresh)
+        $0 clean
+        $0 start
+        ;;
     status)
         show_status
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status}"
+        echo "Usage: $0 {start|stop|restart|clean|fresh|status}"
         echo "  start   - Start all agents"
         echo "  stop    - Stop all agents"
         echo "  restart - Restart all agents"

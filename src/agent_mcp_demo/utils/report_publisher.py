@@ -15,10 +15,20 @@ class ReportPublisher:
         Args:
             base_dir: Base directory for the project. If None, uses git root directory.
         """
-        self.base_dir = Path(base_dir) if base_dir else Path(__file__).parent.parent.parent.parent
+        self.base_dir = Path(base_dir) if base_dir else Path(os.environ.get("WORKSPACE_DIR", os.getcwd()))
         self.reports_dir = self.base_dir / "reports"
         self.docs_dir = self.base_dir / "docs"
-        self._ensure_directories()
+        try:
+            self._ensure_directories()
+        except Exception as e:
+            print(f"Error creating directories: {e}")
+            # Create in temp dir as fallback
+            import tempfile
+            temp_root = Path(tempfile.gettempdir()) / "github_reports"
+            temp_root.mkdir(exist_ok=True)
+            self.reports_dir = temp_root / "reports"
+            self.docs_dir = temp_root / "docs"
+            self._ensure_directories()
 
     def _ensure_directories(self):
         """Ensure necessary directories exist."""
@@ -91,7 +101,7 @@ class ReportPublisher:
         with open(self.docs_dir / "index.html", "w") as f:
             f.write(template)
 
-    def publish_report(self, 
+    async def publish_report(self, 
                       report_content: str,
                       org_name: str,
                       iteration_name: Optional[str] = None,

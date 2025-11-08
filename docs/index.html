@@ -1,0 +1,55 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GitHub Organization Reports</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 1rem; }
+        .report-list { list-style: none; padding: 0; }
+        .report-item { margin: 1rem 0; padding: 1rem; border: 1px solid #ddd; border-radius: 4px; }
+        .report-item:hover { background-color: #f5f5f5; }
+        .report-date { color: #666; }
+        .report-title { font-size: 1.2rem; margin: 0.5rem 0; }
+        .report-meta { font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <h1>GitHub Organization Reports</h1>
+    <div id="reports">
+        <!-- Reports will be dynamically inserted here -->
+    </div>
+    <script>
+        async function loadReports() {
+            const response = await fetch('reports.json');
+            const reports = await response.json();
+            const reportsDiv = document.getElementById('reports');
+            const reportsList = document.createElement('ul');
+            reportsList.className = 'report-list';
+            
+            reports.sort((a, b) => new Date(b.date) - new Date(a.date));
+            
+            reports.forEach(report => {
+                const li = document.createElement('li');
+                li.className = 'report-item';
+                li.innerHTML = `
+                    <div class="report-date">${new Date(report.date).toLocaleDateString()}</div>
+                    <div class="report-title">
+                        <a href="${report.path}">${report.title}</a>
+                    </div>
+                    <div class="report-meta">
+                        Sprint: ${report.iteration_name || 'N/A'} |
+                        Organization: ${report.org_name}
+                    </div>
+                `;
+                reportsList.appendChild(li);
+            });
+            
+            reportsDiv.appendChild(reportsList);
+        }
+        
+        loadReports();
+    </script>
+</body>
+</html>

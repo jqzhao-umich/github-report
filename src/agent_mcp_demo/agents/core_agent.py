@@ -7,8 +7,7 @@ This agent handles basic note operations and state management. It provides the f
 - Prompt generation and customization
 """
 
-from mcp import Tool, Resource
-from mcp.shared.types import TextContent, ImageContent, EmbeddedResource
+import mcp.types as types
 from pydantic import AnyUrl
 from mcp.server import Server
 import json
@@ -133,7 +132,7 @@ async def handle_list_tools() -> list[types.Tool]:
 @server.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict | None
-) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+) -> list[types.TextContent]:
     """
     Handle tool execution requests.
     Tools can modify server state and notify clients of changes.

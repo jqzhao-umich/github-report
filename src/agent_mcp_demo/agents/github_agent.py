@@ -1,14 +1,39 @@
 import mcp.types as types
 import os
 import json
+import logging
 import requests
 from datetime import datetime, timezone, timedelta
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/github.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('github-agent')
 try:
     from github import Github
 except ImportError:
     raise ImportError("PyGithub is required. Install it with: pip install PyGithub")
+
+import logging
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/github.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('github-agent')
 
 server = Server("github-agent")
 
@@ -214,31 +239,94 @@ class GitHubAccessError(GitHubError):
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    # Check for unknown tools first
-    valid_tools = ["get-iteration-info", "get-github-data"]
-    if name not in valid_tools:
-        raise ValueError(f"Unknown tool: {name}")
-    
-    if not arguments:
-        raise ValueError("Missing arguments")
-
-    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-    if not GITHUB_TOKEN:
-        raise GitHubAuthError("GitHub token not set in environment. Please set GITHUB_TOKEN environment variable.")
+    """Handle tool calls with comprehensive error handling"""
+    try:
+        print(f"Starting tool execution: {name} with arguments: {arguments}")
+        
+        # Check for unknown tools first
+        valid_tools = ["get-iteration-info", "get-github-data"]
+        if name not in valid_tools:
+            raise ValueError(f"Unknown tool: {name}")
+        
+        if not arguments:
+            raise ValueError("Missing arguments")
+        
+        print(f"Arguments validated for tool: {name}")
+        
+        GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+        if not GITHUB_TOKEN:
+            raise GitHubAuthError("GitHub token not set in environment. Please set GITHUB_TOKEN environment variable.")
+            
+        print(f"Environment validated for tool: {name}")
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error validating tool execution: {error_details}")
+        raise GitHubError(f"Failed to validate tool execution: {str(e)}")
 
     if name == "get-iteration-info":
-        org_name = arguments.get("org_name")
-        project_name = arguments.get("project_name", "Michigan App Team Task Board")
-        
-        iteration_info = get_current_iteration_info(GITHUB_TOKEN, org_name, project_name)
-        return [types.TextContent(type="text", text=str(iteration_info))]
+        try:
+            org_name = arguments.get("org_name")
+            if not org_name:
+                raise ValueError("org_name is required")
+                
+            project_name = arguments.get("project_name", "Michigan App Team Task Board")
+            print(f"Getting iteration info for org: {org_name}, project: {project_name}")
+            
+            iteration_info = get_current_iteration_info(GITHUB_TOKEN, org_name, project_name)
+            if iteration_info is None:
+                raise GitHubAccessError("Could not fetch iteration information")
+                
+            print(f"Successfully retrieved iteration info: {iteration_info}")
+            return [types.TextContent(type="text", text=str(iteration_info))]
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error in get-iteration-info: {error_details}")
+            raise GitHubError(f"Error getting iteration info: {str(e)}")
 
     elif name == "get-github-data":
-        org_name = arguments.get("org_name")
-        iteration_info = arguments.get("iteration_info")
-        
-        g = Github(GITHUB_TOKEN)
-        org = g.get_organization(org_name)
+        try:
+            org_name = arguments.get("org_name")
+            if not org_name:
+                raise ValueError("org_name is required")
+                
+            iteration_info = arguments.get("iteration_info")
+            print(f"Getting GitHub data for org: {org_name} with iteration info: {iteration_info}")
+            
+            try:
+                g = Github(GITHUB_TOKEN)
+                
+                # Test GitHub connection first
+                user = g.get_user()
+                if not user or not user.login:
+                    raise GitHubAuthError("Could not authenticate with GitHub API")
+                print(f"Successfully authenticated as: {user.login}")
+                
+                # Test organization access
+                org = g.get_organization(org_name)
+                if not org or not org.login:
+                    raise GitHubAccessError(f"Could not access organization: {org_name}")
+                print(f"Successfully connected to GitHub organization: {org_name}")
+                
+                # Test org membership
+                try:
+                    user.get_organization_membership(org_name)
+                except:
+                    print(f"Warning: User {user.login} might not be a member of {org_name}, some data may be limited")
+                    
+            except GitHubAuthError as e:
+                raise e
+            except GitHubAccessError as e:
+                raise e
+            except Exception as e:
+                raise GitHubAccessError(f"Failed to access GitHub organization {org_name}: {str(e)}")
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error in get-github-data setup: {error_details}")
+            raise GitHubError(f"Failed to setup GitHub data retrieval: {str(e)}")
         
         # Initialize data structures
         member_stats = {}
@@ -375,5 +463,19 @@ async def main():
         )
 
 if __name__ == "__main__":
-    import asyncio
+        import asyncio
+    import logging
+    
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('logs/github.log'),
+            logging.StreamHandler()
+        ]
+    )
+    logger = logging.getLogger('github-agent')
+    logger.info("Starting GitHub Agent")
+    
     asyncio.run(main())
