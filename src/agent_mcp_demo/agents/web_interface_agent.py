@@ -1,5 +1,5 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
@@ -7,7 +7,10 @@ from datetime import datetime, timezone, timedelta
 import mcp.types as types
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
-from .utils import get_detroit_timezone, get_env_var, format_datetime
+from ..utils import get_detroit_timezone, get_env_var, format_datetime
+from ..utils.report_publisher import ReportPublisher
+
+publisher = ReportPublisher()
 
 try:
     import uvicorn
@@ -66,13 +69,57 @@ async def root():
                 max-height: 600px;
                 overflow-y: auto;
             }
+            .actions {
+                margin: 20px 0;
+                display: flex;
+                gap: 10px;
+            }
+            .action-btn {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            .primary-btn {
+                background-color: #007bff;
+                color: white;
+            }
+            .primary-btn:hover {
+                background-color: #0056b3;
+            }
+            .success-btn {
+                background-color: #28a745;
+                color: white;
+            }
+            .success-btn:hover {
+                background-color: #218838;
+            }
+            .status-message {
+                margin-top: 10px;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            .status-message.success {
+                background-color: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .status-message.error {
+                background-color: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
                 <h1>GitHub Organization Report</h1>
-                <button class="refresh-btn" onclick="loadReport()">Refresh Report</button>
+                <div class="actions">
+                    <button class="action-btn primary-btn" onclick="loadReport()">Refresh Report</button>
+                    <button class="action-btn success-btn" onclick="publishReport()">Save Report</button>
+                </div>
             </div>
             <div id="report-container">
                 <div class="loading">Loading report...</div>
@@ -102,6 +149,49 @@ async def root():
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Refresh Report';
+                }
+            }
+            
+            async function publishReport() {
+                const btn = document.querySelector('.success-btn');
+                const container = document.getElementById('report-container');
+                
+                btn.disabled = true;
+                btn.textContent = 'Publishing...';
+                
+                try {
+                    const response = await fetch('/api/reports/publish', {
+                        method: 'POST'
+                    });
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        container.insertAdjacentHTML('beforebegin', 
+                            '<div class="status-message success">' + 
+                            'Report started publishing for ' + result.org_name + 
+                            (result.iteration_name ? ' - ' + result.iteration_name : '') +
+                            '</div>'
+                        );
+                    } else {
+                        container.insertAdjacentHTML('beforebegin',
+                            '<div class="status-message error">Error: ' + 
+                            (result.error || 'Failed to publish report') + '</div>'
+                        );
+                    }
+                } catch (error) {
+                    container.insertAdjacentHTML('beforebegin',
+                        '<div class="status-message error">Error: ' + 
+                        error.message + '</div>'
+                    );
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Save Report';
+                    
+                    // Remove status message after 5 seconds
+                    setTimeout(() => {
+                        const messages = document.querySelectorAll('.status-message');
+                        messages.forEach(msg => msg.remove());
+                    }, 5000);
                 }
             }
             
@@ -232,6 +322,56 @@ async def github_report():
     Legacy endpoint that redirects to the new web interface.
     """
     return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
+
+@app.post("/api/reports/publish", response_class=JSONResponse)
+async def publish_report(background_tasks: BackgroundTasks):
+    """
+    Publish the current report to both Git storage and GitHub Pages.
+    The report will be generated and published asynchronously.
+    """
+    try:
+        report_text = await github_report_api()
+        if isinstance(report_text, str) and "error" in report_text.lower():
+            return JSONResponse({"error": report_text}, status_code=500)
+            
+        # Parse iteration info from the report text
+        lines = report_text.split("\n")
+        org_name = lines[0].split(": ")[1]
+        
+        iteration_info = {}
+        if "CURRENT ITERATION INFORMATION" in report_text:
+            info_section = report_text.split("CURRENT ITERATION INFORMATION")[1].split("SUMMARY")[0]
+            for line in info_section.split("\n"):
+                if "Iteration Name:" in line:
+                    iteration_info["name"] = line.split(": ")[1]
+                elif "Start Date:" in line:
+                    iteration_info["start_date"] = line.split(": ")[1]
+                elif "End Date:" in line:
+                    iteration_info["end_date"] = line.split(": ")[1]
+        
+        def publish_in_background():
+            result = publisher.publish_report(
+                report_content=report_text,
+                org_name=org_name,
+                iteration_name=iteration_info.get("name"),
+                start_date=iteration_info.get("start_date"),
+                end_date=iteration_info.get("end_date")
+            )
+            return result
+            
+        background_tasks.add_task(publish_in_background)
+        
+        return JSONResponse({
+            "message": "Report generation started. It will be published shortly.",
+            "org_name": org_name,
+            "iteration_name": iteration_info.get("name")
+        })
+        
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Failed to publish report: {str(e)}"}, 
+            status_code=500
+        )
 
 async def main():
     from mcp.server.stdio import stdio_server
