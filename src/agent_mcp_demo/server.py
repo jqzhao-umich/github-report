@@ -631,8 +631,9 @@ async def github_report_api():
         
         # Test the connection by getting user info
         try:
-            user = g.get_user()
-            print(f"Connected as: {user.login}")
+            current_user = g.get_user()
+            current_user_login = current_user.login
+            print(f"Connected as: {current_user_login}")
         except Exception as e:
             return f"GitHub authentication failed: {str(e)}\n\nPlease check your GitHub token."
         
@@ -650,7 +651,7 @@ async def github_report_api():
         except Exception as e:
             return f"Error getting organization members: {str(e)}"
         
-        # Build member stats and email mapping
+        # Build member stats and email mapping (excluding current user)
         member_stats = {}
         email_to_login = {}
         commit_details = {}
@@ -658,6 +659,11 @@ async def github_report_api():
         closed_issues = {}
         
         for member in members:
+            # Skip the current user
+            if member.login == current_user_login:
+                print(f"Skipping current user: {member.login}")
+                continue
+                
             member_stats[member.login] = {"commits": 0, "assigned_issues": 0, "closed_issues": 0}
             commit_details[member.login] = []
             assigned_issues[member.login] = []
@@ -759,19 +765,26 @@ async def github_report_api():
                             }
                             
                             # First try GitHub API author if available
-                            if commit.author and hasattr(commit.author, 'login') and commit.author.login in member_stats:
+                            if commit.author and hasattr(commit.author, 'login'):
                                 login = commit.author.login
-                                member_stats[login]["commits"] += 1
-                                commit_details[login].append(commit_info)
-                                matched = True
-                                print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
-                                continue  # Move to next commit since we found a match
+                                # Skip if it's the current user
+                                if login == current_user_login:
+                                    continue
+                                if login in member_stats:
+                                    member_stats[login]["commits"] += 1
+                                    commit_details[login].append(commit_info)
+                                    matched = True
+                                    print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
+                                    continue  # Move to next commit since we found a match
                             
                             # Try email mapping
                             if hasattr(commit.commit.author, 'email') and commit.commit.author.email:
                                 author_email = commit.commit.author.email.lower()
                                 if author_email in email_to_login:
                                     member_login = email_to_login[author_email]
+                                    # Skip if it's the current user
+                                    if member_login == current_user_login:
+                                        continue
                                     member_stats[member_login]["commits"] += 1
                                     commit_details[member_login].append(commit_info)
                                     matched = True
@@ -815,6 +828,9 @@ async def github_report_api():
                     
                     # Track assignees for both open and closed issues
                     for assignee in issue.assignees:
+                        # Skip if it's the current user
+                        if assignee.login == current_user_login:
+                            continue
                         if assignee.login in member_stats:
                             # Track both open and closed issues for each user
                             from datetime import timezone
