@@ -3,10 +3,10 @@ from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
-from datetime import datetime
-from mcp.server.models import types
+from datetime import datetime, timezone, timedelta
 from mcp.server import Server
 from .utils import get_detroit_timezone, get_env_var, format_datetime
+import requests
 
 try:
     import uvicorn
@@ -29,6 +29,14 @@ app.add_middleware(
 app = FastAPI()
 
 server = Server("web-interface-agent")
+
+def get_github_username(token: str) -> str:
+    """Fetch the GitHub username associated with the token."""
+    headers = {"Authorization": f"token {token}"}
+    response = requests.get("https://api.github.com/user", headers=headers)
+    if response.status_code == 200:
+        return response.json().get("login", "")
+    return ""
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -180,7 +188,12 @@ async def github_report_api():
     assigned_issues = github_data['assigned_issues']
     closed_issues = github_data['closed_issues']
     
+    # Exclude the current user from the report
+    current_user = get_github_username(GITHUB_TOKEN) if GITHUB_TOKEN else None
+    
     for login, stats in member_stats.items():
+        if current_user and login == current_user:
+            continue  # Skip myself
         report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
     
     # Detailed section
@@ -188,6 +201,8 @@ async def github_report_api():
     report.append("=" * 60)
     
     for login, stats in member_stats.items():
+        if current_user and login == current_user:
+            continue  # Skip myself
         if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
             report.append(f"\nUser: {login}")
             report.append("-" * 40)
