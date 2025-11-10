@@ -5,7 +5,6 @@ import json
 import os
 import logging
 from datetime import datetime, timezone, timedelta
-import mcp.types as types
 from mcp.server import Server, NotificationOptions
 
 # Set up logging
@@ -21,6 +20,7 @@ logger = logging.getLogger('web-interface-agent')
 from mcp.server.models import InitializationOptions
 from ..utils import get_detroit_timezone, get_env_var, format_datetime
 from ..utils.report_publisher import ReportPublisher
+import requests
 
 publisher = ReportPublisher()
 
@@ -43,6 +43,14 @@ app.add_middleware(
 )
 
 server = Server("web-interface-agent")
+
+def get_github_username(token: str) -> str:
+    """Fetch the GitHub username associated with the token."""
+    headers = {"Authorization": f"token {token}"}
+    response = requests.get("https://api.github.com/user", headers=headers)
+    if response.status_code == 200:
+        return response.json().get("login", "")
+    return ""
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -261,8 +269,10 @@ async def github_report_api():
             status_code=500
         )
     
-    detroit_tz = get_detroit_timezone()
-    request_start_time = datetime.now(detroit_tz)
+    import time
+    request_start_time = datetime.now().astimezone()
+    # Detect if we're in daylight saving time
+    tz_name = "EDT" if time.localtime().tm_isdst else "EST"
     
     # Get data from GitHub agent (only if MCP context is available)
     iteration_info = None
@@ -336,103 +346,77 @@ async def github_report_api():
         return "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
     
     # Generate report
-    try:
-        report = []
-        logger.info("Starting report generation...")
-        
-        report.append(f"GitHub Organization: {ORG_NAME}")
-        report.append(f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}\n")
-        
-        if iteration_info:
-            logger.info(f"Adding iteration info to report: {iteration_info}")
-            report.append("=" * 60)
-            report.append("CURRENT ITERATION INFORMATION")
-            report.append("=" * 60)
-            report.append(f"Iteration Name: {iteration_info.get('name', 'Unknown')}")
-            if iteration_info.get('start_date'):
-                report.append(f"Start Date: {iteration_info['start_date']}")
-            if iteration_info.get('end_date'):
-                report.append(f"End Date: {iteration_info['end_date']}")
-            if iteration_info.get('path'):
-                report.append(f"Iteration Path: {iteration_info['path']}")
-            report.append("=" * 60)
+    report = []
+    report.append(f"GitHub Organization: {ORG_NAME}")
+    report.append(f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}\n")
+    
+    if iteration_info:
+        report.append("=" * 60)
+        report.append("CURRENT ITERATION INFORMATION")
+        report.append("=" * 60)
+        report.append(f"Iteration Name: {iteration_info.get('name', 'Unknown')}")
+        if iteration_info.get('start_date'):
+            report.append(f"Start Date: {iteration_info['start_date']}")
+        if iteration_info.get('end_date'):
+            report.append(f"End Date: {iteration_info['end_date']}")
+        if iteration_info.get('path'):
+            report.append(f"Iteration Path: {iteration_info['path']}")
+        report.append("=" * 60)
+        report.append("")
+    
+    # Summary section
+    report.append("\nSUMMARY")
+    report.append("=" * 60)
+    report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13}")
+    report.append("-" * 65)
+    
+    member_stats = github_data['member_stats']
+    commit_details = github_data['commit_details']
+    assigned_issues = github_data['assigned_issues']
+    closed_issues = github_data['closed_issues']
+    
+    # Exclude the current user from the report
+    current_user = get_github_username(GITHUB_TOKEN) if GITHUB_TOKEN else None
+    
+    for login, stats in member_stats.items():
+        if current_user and login == current_user:
+            continue  # Skip myself
+        report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
+    
+    # Detailed section
+    report.append("\nDETAILED ACTIVITY")
+    report.append("=" * 60)
+    
+    for login, stats in member_stats.items():
+        if current_user and login == current_user:
+            continue  # Skip myself
+        if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
+            report.append(f"\nUser: {login}")
+            report.append("-" * 40)
+            
+            if stats['commits'] > 0:
+                report.append("\nCommits:")
+                for commit_info in commit_details.get(login, []):
+                    report.append(f"- [{commit_info['repo']}] {commit_info['message']} ({commit_info['date'].strftime('%Y-%m-%d')})")
+            
+            if stats['assigned_issues'] > 0:
+                report.append("\nAssigned Issues:")
+                for issue_info in assigned_issues.get(login, []):
+                    status = "Open" if issue_info['state'] == "open" else "Closed"
+                    report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} ({status})")
+            
+            if stats['closed_issues'] > 0:
+                report.append("\nClosed Issues:")
+                for issue_info in closed_issues.get(login, []):
+                    report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} (Closed on {issue_info['closed_date'].strftime('%Y-%m-%d')})")
+            
             report.append("")
-    except Exception as e:
-        logger.error(f"Error generating report header: {e}", exc_info=True)
-        raise ValueError(f"Failed to generate report header: {e}")
     
-    try:
-        # Summary section
-        logger.info("Generating summary section...")
-        if not github_data:
-            raise ValueError("No GitHub data available")
-            
-        member_stats = github_data.get('member_stats')
-        if not member_stats:
-            raise ValueError("No member stats in GitHub data")
-            
-        commit_details = github_data.get('commit_details', {})
-        assigned_issues = github_data.get('assigned_issues', {})
-        closed_issues = github_data.get('closed_issues', {})
-        
-        report.append("\nSUMMARY")
-        report.append("=" * 60)
-        report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13}")
-        report.append("-" * 65)
-        
-        logger.info(f"Found {len(member_stats)} members to report on")
-    except Exception as e:
-        logger.error(f"Error setting up summary section: {e}", exc_info=True)
-        raise ValueError(f"Failed to generate summary section: {e}")
-    
-    try:
-        # Generate summary rows
-        for login, stats in member_stats.items():
-            report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
-        
-        # Detailed section
-        logger.info("Generating detailed activity section...")
-        report.append("\nDETAILED ACTIVITY")
-        report.append("=" * 60)
-        
-        for login, stats in member_stats.items():
-            if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
-                logger.info(f"Adding details for user {login}")
-                report.append(f"\nUser: {login}")
-                report.append("-" * 40)
-                
-                if stats['commits'] > 0:
-                    report.append("\nCommits:")
-                    for commit_info in commit_details.get(login, []):
-                        report.append(f"- [{commit_info['repo']}] {commit_info['message']} ({commit_info['date'][:10]})")
-                
-                if stats['assigned_issues'] > 0:
-                    report.append("\nAssigned Issues:")
-                    for issue_info in assigned_issues.get(login, []):
-                        status = "Open" if issue_info['state'] == "open" else "Closed"
-                        report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} ({status})")
-                
-                if stats['closed_issues'] > 0:
-                    report.append("\nClosed Issues:")
-                    for issue_info in closed_issues.get(login, []):
-                        report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} (Closed on {issue_info['closed_date'][:10]})")
-                
-                report.append("")
-        
-        # Add report completion time
-        report_end_time = datetime.now(detroit_tz)
-        report.append("=" * 60)
-        report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}")
-        report.append(f"Generation time: {(report_end_time - request_start_time).total_seconds():.2f} seconds")
-        
-        return "\n".join(report)
-        
-    except Exception as e:
-        logger.error(f"Error generating report details: {e}", exc_info=True)
-        raise ValueError(f"Failed to generate report details: {e}")
-            
-    finally:
-        logger.info("Report generation complete")
+    # Add report completion time
+    report_end_time = datetime.now().astimezone()
+    report.append("=" * 60)
+    report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}")
+    report.append(f"Generation time: {(report_end_time - request_start_time).total_seconds():.2f} seconds")
     
     return "\n".join(report)
 

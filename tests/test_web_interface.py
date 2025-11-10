@@ -143,9 +143,9 @@ def test_github_report_endpoint_no_token(mock_server_context):
 def test_github_report_endpoint_no_org(mock_server_context):
     # Set token but no org
     import os
-    original_token = os.environ.pop("GITHUB_TOKEN", None)
-    original_org = os.environ.pop("GITHUB_ORG_NAME", None)
+    token = os.environ.get("GITHUB_TOKEN")
     os.environ["GITHUB_TOKEN"] = "test-token"
+    org = os.environ.pop("GITHUB_ORG_NAME", None)
     try:
         response = client.get("/api/github-report")
         assert response.status_code == 500  # We expect a 500 error when no org is provided
@@ -153,17 +153,17 @@ def test_github_report_endpoint_no_org(mock_server_context):
         assert "error" in data
         assert "GitHub organization name not set in environment" in data["error"]
     finally:
-        if original_token:
-            os.environ["GITHUB_TOKEN"] = original_token
-        elif "GITHUB_TOKEN" in os.environ:
+        if token:
+            os.environ["GITHUB_TOKEN"] = token
+        else:
             del os.environ["GITHUB_TOKEN"]
-        if original_org:
-            os.environ["GITHUB_ORG_NAME"] = original_org
+        if org:
+            os.environ["GITHUB_ORG_NAME"] = org
+
 
 def test_report_html_structure():
     response = client.get("/")
     html = response.text
-    # Check for required HTML elements
     assert '<div class="container">' in html
     assert '<div class="header">' in html
     assert '<button class="action-btn primary-btn"' in html
