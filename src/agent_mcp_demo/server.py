@@ -609,11 +609,13 @@ async def github_report_api():
     if not ORG_NAME:
         return "GitHub organization name not set in environment. Please set GITHUB_ORG_NAME environment variable."
     
-    # Record start time in Detroit timezone (UTC-4)
-    from datetime import datetime, timezone, timedelta
-    detroit_tz = timezone(timedelta(hours=-4))  # Detroit is UTC-4
-    request_start_time = datetime.now(detroit_tz)
-    print(f"Request received at: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}")
+    # Record start time in local timezone with proper EST/EDT detection
+    from datetime import datetime
+    import time
+    request_start_time = datetime.now().astimezone()
+    # Detect if we're in daylight saving time
+    tz_name = "EDT" if time.localtime().tm_isdst else "EST"
+    print(f"Request received at: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}")
 
     # Get current iteration information from GitHub Projects
     iteration_info = None
@@ -901,11 +903,9 @@ async def github_report_api():
                 continue
         
         # Build report with iteration information
-        detroit_tz = timezone(timedelta(hours=-4))  # Detroit is UTC-4
-        report_start_time = datetime.now(detroit_tz)
         report = [
             f"GitHub Organization: {ORG_NAME}",
-            f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}\n"
+            f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}\n"
         ]
         
         # Add iteration information at the beginning
@@ -971,9 +971,9 @@ async def github_report_api():
                 report.append("")  # Empty line for spacing
         
         # Add report completion time
-        report_end_time = datetime.now(detroit_tz)
+        report_end_time = datetime.now().astimezone()
         report.append("=" * 60)
-        report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}")
+        report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}")
         report.append(f"Generation time: {(report_end_time - request_start_time).total_seconds():.2f} seconds")
         
         return "\n".join(report)

@@ -134,8 +134,10 @@ async def github_report_api():
     if not ORG_NAME:
         return "GitHub organization name not set in environment. Please set GITHUB_ORG_NAME environment variable."
     
-    detroit_tz = get_detroit_timezone()
-    request_start_time = datetime.now(detroit_tz)
+    import time
+    request_start_time = datetime.now().astimezone()
+    # Detect if we're in daylight saving time
+    tz_name = "EDT" if time.localtime().tm_isdst else "EST"
     
     # Get data from GitHub agent (only if MCP context is available)
     iteration_info = None
@@ -169,7 +171,7 @@ async def github_report_api():
     # Generate report
     report = []
     report.append(f"GitHub Organization: {ORG_NAME}")
-    report.append(f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}\n")
+    report.append(f"Report started on: {request_start_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}\n")
     
     if iteration_info:
         report.append("=" * 60)
@@ -234,9 +236,9 @@ async def github_report_api():
             report.append("")
     
     # Add report completion time
-    report_end_time = datetime.now(detroit_tz)
+    report_end_time = datetime.now().astimezone()
     report.append("=" * 60)
-    report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p EDT')}")
+    report.append(f"Report completed on: {report_end_time.strftime('%Y-%m-%d %I:%M:%S %p')} {tz_name}")
     report.append(f"Generation time: {(report_end_time - request_start_time).total_seconds():.2f} seconds")
     
     return "\n".join(report)
