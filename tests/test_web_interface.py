@@ -76,6 +76,41 @@ def create_mock_github_data():
         }
     }
 
+def serialize_github_data(data):
+    """Serialize GitHub data with datetime objects to a string that can be eval'd."""
+    import json
+    from datetime import datetime
+    
+    def datetime_handler(obj):
+        if isinstance(obj, datetime):
+            return f"datetime.fromisoformat('{obj.isoformat()}')"
+        return obj
+    
+    # Convert to JSON-like string but with datetime objects properly formatted
+    def convert_dict(d):
+        if isinstance(d, dict):
+            items = []
+            for k, v in d.items():
+                key_str = f"'{k}'" if isinstance(k, str) else str(k)
+                val_str = convert_value(v)
+                items.append(f"{key_str}: {val_str}")
+            return "{" + ", ".join(items) + "}"
+        return str(d)
+    
+    def convert_value(v):
+        if isinstance(v, datetime):
+            return f"datetime.fromisoformat('{v.isoformat()}')"
+        elif isinstance(v, dict):
+            return convert_dict(v)
+        elif isinstance(v, list):
+            return "[" + ", ".join(convert_value(item) for item in v) + "]"
+        elif isinstance(v, str):
+            return f"'{v}'"
+        else:
+            return str(v)
+    
+    return convert_dict(data)
+
 @pytest.fixture
 def mock_env_vars():
     """Setup environment variables for testing."""
@@ -195,7 +230,7 @@ async def test_github_report_with_mock_data(mock_env_vars, mock_server_context):
                 'end_date': '2025-11-15'
             }))],
             # Second call - GitHub data
-            [TextContent(type="text", text=str(create_mock_github_data()))]
+            [TextContent(type="text", text=serialize_github_data(create_mock_github_data()))]
     ]
 
     response = client.get("/api/github-report")
@@ -222,7 +257,7 @@ async def test_publish_report_success(mock_env_vars, mock_server_context, mock_p
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
         }))],
-        [TextContent(type="text", text=str(create_mock_github_data()))]
+        [TextContent(type="text", text=serialize_github_data(create_mock_github_data()))]
     ]
 
     response = client.post("/api/reports/publish")
@@ -251,7 +286,7 @@ async def test_publish_report_failure(mock_env_vars, mock_server_context, mock_p
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
         }))],
-        [TextContent(type="text", text=str(create_mock_github_data()))]
+        [TextContent(type="text", text=serialize_github_data(create_mock_github_data()))]
     ]
     
     # Setup the publisher to fail
