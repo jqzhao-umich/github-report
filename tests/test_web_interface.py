@@ -31,6 +31,7 @@ client = TestClient(app)
 
 def create_mock_github_data():
     """Create mock GitHub data for testing."""
+    from datetime import datetime
     return {
         'member_stats': {
             'user1': {
@@ -49,7 +50,7 @@ def create_mock_github_data():
                 {
                     'repo': 'test-repo',
                     'message': 'Test commit',
-                    'date': '2025-11-07T22:37:17.271491'
+                    'date': datetime.fromisoformat('2025-11-07T22:37:17')
                 }
             ]
         },
@@ -69,7 +70,7 @@ def create_mock_github_data():
                     'repo': 'test-repo',
                     'number': 2,
                     'title': 'Closed issue',
-                    'closed_date': '2025-11-07T22:37:17.271497'
+                    'closed_date': datetime.fromisoformat('2025-11-07T22:37:17')
                 }
             ]
         }
