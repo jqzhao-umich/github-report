@@ -154,11 +154,18 @@ class ReportPublisher:
             "end_date": end_date
         })
         
+        # Build web URL if GITHUB_REPOSITORY is set
+        repo_env = os.getenv('GITHUB_REPOSITORY', '')
+        if repo_env and '/' in repo_env:
+            owner, repo = repo_env.split('/', 1)
+            web_url = f"https://{owner}.github.io/{repo}/{base_name}.html"
+        else:
+            web_url = f"../{base_name}.html"
+        
         return {
             "markdown": str(md_path),
             "html": str(html_path),
-            "web_url": f"https://{os.getenv('GITHUB_REPOSITORY', 'owner/repo').split('/')[0]}.github.io/"
-                      f"{os.getenv('GITHUB_REPOSITORY', 'repo').split('/')[1]}/{base_name}.html"
+            "web_url": web_url
         }
 
     def _wrap_html_template(self, content: str, **metadata) -> str:

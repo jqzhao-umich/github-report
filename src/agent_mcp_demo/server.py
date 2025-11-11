@@ -4,8 +4,8 @@ import asyncio
 import json
 import httpx
 import requests
-from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse, HTMLResponse
+from fastapi import FastAPI, BackgroundTasks
+from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -14,10 +14,19 @@ import mcp.server.stdio
 import os
 from github import Github
 from dotenv import load_dotenv
+from pathlib import Path
+import sys
 # Removed Azure DevOps imports - now using GitHub Projects
 
 # Load environment variables from .env file at startup
 load_dotenv()
+
+# Add the src directory to the path so we can import from agent_mcp_demo
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from agent_mcp_demo.utils.report_publisher import ReportPublisher
+
+# Initialize the report publisher
+publisher = ReportPublisher()
 
 # Add FastAPI app for HTTP endpoints
 app = FastAPI()
@@ -33,18 +42,41 @@ async def root():
             body { font-family: Arial, sans-serif; margin: 40px; }
             .container { max-width: 1200px; margin: 0 auto; }
             .header { text-align: center; margin-bottom: 30px; }
-            .refresh-btn { 
-                background-color: #007bff; 
-                color: white; 
-                padding: 10px 20px; 
-                border: none; 
-                border-radius: 5px; 
-                cursor: pointer; 
-                font-size: 16px;
-                margin-bottom: 20px;
+            .actions { 
+                margin: 20px 0;
+                display: flex;
+                gap: 10px;
+                justify-content: center;
             }
-            .refresh-btn:hover { background-color: #0056b3; }
-            .refresh-btn:disabled { background-color: #6c757d; cursor: not-allowed; }
+            .action-btn {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            .primary-btn {
+                background-color: #007bff;
+                color: white;
+            }
+            .primary-btn:hover {
+                background-color: #0056b3;
+            }
+            .primary-btn:disabled {
+                background-color: #6c757d;
+                cursor: not-allowed;
+            }
+            .success-btn {
+                background-color: #28a745;
+                color: white;
+            }
+            .success-btn:hover {
+                background-color: #218838;
+            }
+            .success-btn:disabled {
+                background-color: #6c757d;
+                cursor: not-allowed;
+            }
             .loading { color: #666; font-style: italic; }
             .error { color: #dc3545; }
             .report { 
@@ -57,13 +89,31 @@ async def root():
                 max-height: 600px;
                 overflow-y: auto;
             }
+            .status-message {
+                margin-top: 10px;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            .status-message.success {
+                background-color: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .status-message.error {
+                background-color: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
                 <h1>GitHub Organization Report</h1>
-                <button class="refresh-btn" onclick="loadReport()">Refresh Report</button>
+                <div class="actions">
+                    <button class="action-btn primary-btn" onclick="loadReport()">Refresh Report</button>
+                    <button class="action-btn success-btn" onclick="publishReport()">Save to GitHub Pages</button>
+                </div>
             </div>
             <div id="report-container">
                 <div class="loading">Loading report...</div>
@@ -72,7 +122,7 @@ async def root():
         
         <script>
             async function loadReport() {
-                const btn = document.querySelector('.refresh-btn');
+                const btn = document.querySelector('.primary-btn');
                 const container = document.getElementById('report-container');
                 
                 btn.disabled = true;
@@ -93,6 +143,51 @@ async def root():
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Refresh Report';
+                }
+            }
+            
+            async function publishReport() {
+                const btn = document.querySelector('.success-btn');
+                const container = document.getElementById('report-container');
+                
+                btn.disabled = true;
+                btn.textContent = 'Publishing...';
+                
+                try {
+                    const response = await fetch('/api/reports/publish', {
+                        method: 'POST'
+                    });
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        container.insertAdjacentHTML('beforebegin', 
+                            '<div class="status-message success">' + 
+                            'Report published successfully for ' + result.org_name + 
+                            (result.iteration_name ? ' - ' + result.iteration_name : '') +
+                            '<br>Check the docs folder or GitHub Pages for the published report.' +
+                            '</div>'
+                        );
+                    } else {
+                        container.insertAdjacentHTML('beforebegin',
+                            '<div class="status-message error">Error: ' + 
+                            (result.error || 'Failed to publish report') + 
+                            '</div>'
+                        );
+                    }
+                } catch (error) {
+                    container.insertAdjacentHTML('beforebegin',
+                        '<div class="status-message error">Error: ' + 
+                        error.message + '</div>'
+                    );
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Save to GitHub Pages';
+                    
+                    // Remove status message after 5 seconds
+                    setTimeout(() => {
+                        const messages = document.querySelectorAll('.status-message');
+                        messages.forEach(msg => msg.remove());
+                    }, 5000);
                 }
             }
             
@@ -987,6 +1082,102 @@ async def github_report():
     Legacy endpoint that redirects to the new web interface.
     """
     return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
+
+@app.post("/api/reports/publish", response_class=JSONResponse)
+async def publish_report_endpoint(background_tasks: BackgroundTasks):
+    """
+    Publish the current report to GitHub Pages.
+    The report will be generated and published asynchronously.
+    """
+    try:
+        report_text = await github_report_api()
+        
+        # Check if the report is an error message (starts with error indicators)
+        if isinstance(report_text, str) and (
+            report_text.startswith("GitHub token not set") or 
+            report_text.startswith("GitHub organization name not set") or
+            report_text.startswith("Unexpected error:")
+        ):
+            return JSONResponse({"error": report_text}, status_code=500)
+            
+        # Parse organization name from the report
+        lines = report_text.split("\n")
+        if not lines or not lines[0].startswith("GitHub Organization:"):
+            raise ValueError(f"Invalid report format - does not start with organization info")
+            
+        org_line_parts = lines[0].split(": ")
+        if len(org_line_parts) != 2:
+            raise ValueError(f"Invalid organization line format: {lines[0]}")
+            
+        org_name = org_line_parts[1].strip()
+
+        # Check if required environment variables are set
+        if not os.environ.get("GITHUB_TOKEN"):
+            raise ValueError("GitHub token not set. Please set GITHUB_TOKEN environment variable.")
+        if not os.environ.get("GITHUB_ORG_NAME"):
+            raise ValueError("GitHub organization name not set. Please set GITHUB_ORG_NAME environment variable.")
+        
+        # Parse iteration info if available
+        iteration_info = {}
+        try:
+            if "CURRENT ITERATION INFORMATION" in report_text:
+                info_section = report_text.split("CURRENT ITERATION INFORMATION")[1].split("SUMMARY")[0]
+                for line in info_section.split("\n"):
+                    if ":" in line:
+                        key, value = line.split(":", 1)
+                        key = key.strip()
+                        value = value.strip()
+                        if "Iteration Name" in key:
+                            iteration_info["name"] = value
+                        elif "Start Date" in key:
+                            iteration_info["start_date"] = value
+                        elif "End Date" in key:
+                            iteration_info["end_date"] = value
+        except Exception as e:
+            print(f"Error parsing iteration info: {e}")
+            # Don't fail if iteration info parsing fails
+        
+        async def publish_in_background():
+            try:
+                print("Starting background publish task...")
+                print(f"Publishing report for org: {org_name}")
+                print(f"Iteration info: {iteration_info}")
+                
+                result = await publisher.publish_report(
+                    report_content=report_text,
+                    org_name=org_name,
+                    iteration_name=iteration_info.get("name"),
+                    start_date=iteration_info.get("start_date"),
+                    end_date=iteration_info.get("end_date")
+                )
+                print(f"Publish result: {result}")
+                return result
+            except Exception as e:
+                print(f"Error in background publish task: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+            
+        # Run the task in background
+        background_tasks.add_task(publish_in_background)
+        
+        return JSONResponse({
+            "message": "Report published successfully. Check docs/ directory.",
+            "org_name": org_name,
+            "iteration_name": iteration_info.get("name", "N/A")
+        })
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in publish_report: {error_details}")
+        return JSONResponse(
+            {
+                "error": f"Failed to publish report: {str(e)}",
+                "details": error_details
+            }, 
+            status_code=500
+        )
 
 async def main():
     # Run the server using stdin/stdout streams
