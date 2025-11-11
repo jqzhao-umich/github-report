@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import markdown
 import yaml
+from zoneinfo import ZoneInfo
 
 class ReportPublisher:
     def __init__(self, base_dir: str = None):
@@ -18,6 +19,8 @@ class ReportPublisher:
         self.base_dir = Path(base_dir) if base_dir else Path(os.environ.get("WORKSPACE_DIR", os.getcwd()))
         self.reports_dir = self.base_dir / "reports"
         self.docs_dir = self.base_dir / "docs"
+        # Use EST timezone (you can make this configurable via env var)
+        self.timezone = ZoneInfo(os.environ.get("TZ", "America/New_York"))
         try:
             self._ensure_directories()
         except Exception as e:
@@ -29,6 +32,10 @@ class ReportPublisher:
             self.reports_dir = temp_root / "reports"
             self.docs_dir = temp_root / "docs"
             self._ensure_directories()
+
+    def _get_local_time(self):
+        """Get current time in the configured timezone."""
+        return datetime.now(self.timezone)
 
     def _ensure_directories(self):
         """Ensure necessary directories exist."""
@@ -120,7 +127,8 @@ class ReportPublisher:
             Dict containing paths to the published files
         """
         # Generate timestamp and slugified names
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        local_time = self._get_local_time()
+        timestamp = local_time.strftime("%Y%m%d_%H%M%S")
         iteration_slug = (iteration_name or "no-iteration").lower().replace(" ", "-")
         base_name = f"{timestamp}_{org_name}_{iteration_slug}"
         
@@ -145,7 +153,7 @@ class ReportPublisher:
             
         # Update reports index
         self._update_reports_index({
-            "date": datetime.now().isoformat(),
+            "date": local_time.isoformat(),
             "title": f"Report for {org_name}" + (f" - {iteration_name}" if iteration_name else ""),
             "path": f"{base_name}.html",
             "org_name": org_name,
@@ -170,6 +178,7 @@ class ReportPublisher:
 
     def _wrap_html_template(self, content: str, **metadata) -> str:
         """Wrap HTML content in a template with metadata."""
+        local_time = self._get_local_time()
         return f"""
 <!DOCTYPE html>
 <html>
@@ -193,7 +202,7 @@ class ReportPublisher:
         <p><strong>Organization:</strong> {metadata['org_name']}</p>
         <p><strong>Iteration:</strong> {metadata['iteration_name'] or 'N/A'}</p>
         <p><strong>Period:</strong> {metadata['start_date'] or 'N/A'} to {metadata['end_date'] or 'N/A'}</p>
-        <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>Generated:</strong> {local_time.strftime('%Y-%m-%d %H:%M:%S %Z')}</p>
     </div>
     <div class="content">
         {content}
