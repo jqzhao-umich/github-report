@@ -11,6 +11,7 @@ services:
       - GITHUB_ITERATION_START=${GITHUB_ITERATION_START:-}
       - GITHUB_ITERATION_END=${GITHUB_ITERATION_END:-}
       - GITHUB_ITERATION_NAME=${GITHUB_ITERATION_NAME:-}
+      - TZ=${TZ:-America/New_York}
     volumes:
       # Mount source code for development (optional)
       - ./src:/app/src:ro
