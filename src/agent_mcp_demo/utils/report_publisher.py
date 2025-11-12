@@ -175,7 +175,10 @@ class ReportPublisher:
             f.write(report_content)
         
         # Convert to HTML and save
-        html_content = markdown.markdown(report_content)
+        html_content = markdown.markdown(
+            report_content,
+            extensions=['extra', 'nl2br', 'sane_lists']
+        )
         html_template = self._wrap_html_template(
             html_content,
             org_name=org_name,
@@ -227,13 +230,20 @@ class ReportPublisher:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 1rem; }}
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 1rem; background-color: #fff; }}
         .metadata {{ background-color: #f5f5f5; padding: 1rem; margin-bottom: 2rem; border-radius: 4px; }}
         .content {{ margin-top: 2rem; }}
+        .content h1 {{ color: #333; border-bottom: 2px solid #0066cc; padding-bottom: 0.5rem; margin-top: 2rem; }}
+        .content h2 {{ color: #555; margin-top: 1.5rem; margin-bottom: 0.5rem; }}
+        .content p {{ margin: 0.5rem 0; }}
+        .content pre {{ background-color: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }}
+        .content ul, .content ol {{ margin: 0.5rem 0; padding-left: 2rem; }}
+        .content li {{ margin: 0.25rem 0; }}
         table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
-        th, td {{ border: 1px solid #ddd; padding: 0.5rem; }}
-        th {{ background-color: #f5f5f5; }}
+        th, td {{ border: 1px solid #ddd; padding: 0.5rem; text-align: left; }}
+        th {{ background-color: #f5f5f5; font-weight: bold; }}
         tr:nth-child(even) {{ background-color: #f9f9f9; }}
+        code {{ background-color: #f0f0f0; padding: 0.2rem 0.4rem; border-radius: 3px; font-family: monospace; }}
     </style>
 </head>
 <body>
