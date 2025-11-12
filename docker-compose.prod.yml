@@ -1,0 +1,48 @@
+# Production Docker Compose configuration
+# This extends the base docker-compose.yml with production-specific settings
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  github-report-app:
+    build:
+      context: .
+      args:
+        # Fixed UID/GID for production consistency
+        USER_ID: 1000
+        GROUP_ID: 1000
+        USERNAME: appuser
+    restart: always
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG_NAME=${GITHUB_ORG_NAME}
+      - GITHUB_ITERATION_START=${GITHUB_ITERATION_START:-}
+      - GITHUB_ITERATION_END=${GITHUB_ITERATION_END:-}
+      - GITHUB_ITERATION_NAME=${GITHUB_ITERATION_NAME:-}
+      - TZ=${TZ:-America/New_York}
+      # Production-specific settings
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # In production, don't mount source code (baked into image)
+      # Only mount data directories
+      - ./docs:/app/docs
+      - ./reports:/app/reports
+      - ./.git:/app/.git
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/github-report"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Production networking considerations
+    # Uncomment if you need to restrict network access
+    # networks:
+    #   - internal
+    
+# Optional: define networks for production isolation
+# networks:
+#   internal:
+#     driver: bridge

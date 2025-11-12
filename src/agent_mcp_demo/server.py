@@ -24,12 +24,49 @@ load_dotenv()
 # Add the src directory to the path so we can import from agent_mcp_demo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from agent_mcp_demo.utils.report_publisher import ReportPublisher
+from agent_mcp_demo.utils.git_operations import GitOperations
+from agent_mcp_demo.utils.report_scheduler import ReportScheduler
 
-# Initialize the report publisher
+# Initialize the report publisher and git operations
 publisher = ReportPublisher()
+git_ops = GitOperations()
 
 # Add FastAPI app for HTTP endpoints
 app = FastAPI()
+
+# Initialize scheduler (will be started in lifespan event)
+scheduler = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize and start the report scheduler on app startup."""
+    global scheduler
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # Create scheduler with callbacks
+    scheduler = ReportScheduler(
+        report_generator_callback=github_report_api,
+        publish_callback=lambda report_text, org_name, iteration_name, skip_duplicate_check: 
+            publisher.publish_report(
+                report_content=report_text,
+                org_name=org_name,
+                iteration_name=iteration_name,
+                start_date=os.getenv("GITHUB_ITERATION_START"),
+                end_date=os.getenv("GITHUB_ITERATION_END"),
+                skip_duplicate_check=skip_duplicate_check
+            ),
+        git_operations=git_ops
+    )
+    scheduler.start()
+    logging.info("Application started with automatic report scheduling")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the scheduler on app shutdown."""
+    global scheduler
+    if scheduler:
+        scheduler.stop()
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -1084,10 +1121,13 @@ async def github_report():
     return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
 
 @app.post("/api/reports/publish", response_class=JSONResponse)
-async def publish_report_endpoint(background_tasks: BackgroundTasks):
+async def publish_report_endpoint(background_tasks: BackgroundTasks, force: bool = False):
     """
     Publish the current report to GitHub Pages.
     The report will be generated and published asynchronously.
+    
+    Args:
+        force: If True, skip duplicate checking and force publish
     """
     try:
         report_text = await github_report_api()
@@ -1148,9 +1188,21 @@ async def publish_report_endpoint(background_tasks: BackgroundTasks):
                     org_name=org_name,
                     iteration_name=iteration_info.get("name"),
                     start_date=iteration_info.get("start_date"),
-                    end_date=iteration_info.get("end_date")
+                    end_date=iteration_info.get("end_date"),
+                    skip_duplicate_check=force
                 )
                 print(f"Publish result: {result}")
+                
+                # Auto-commit and push if successfully published
+                if result.get("status") == "published":
+                    commit_msg = f"Publish report for {iteration_info.get('name', 'iteration')}\n\n- Organization: {org_name}\n- Manually triggered publish"
+                    git_result = git_ops.commit_and_push(
+                        file_paths=["docs/", "reports/"],
+                        commit_message=commit_msg
+                    )
+                    print(f"Git operation: {git_result}")
+                    result["git_result"] = git_result
+                
                 return result
             except Exception as e:
                 print(f"Error in background publish task: {e}")
@@ -1162,7 +1214,7 @@ async def publish_report_endpoint(background_tasks: BackgroundTasks):
         background_tasks.add_task(publish_in_background)
         
         return JSONResponse({
-            "message": "Report published successfully. Check docs/ directory.",
+            "message": "Report publishing started. Will auto-commit and push when complete.",
             "org_name": org_name,
             "iteration_name": iteration_info.get("name", "N/A")
         })

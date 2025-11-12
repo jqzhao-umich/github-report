@@ -108,12 +108,38 @@ class ReportPublisher:
         with open(self.docs_dir / "index.html", "w") as f:
             f.write(template)
 
+    def _check_duplicate_report(self, org_name: str, iteration_name: Optional[str]) -> bool:
+        """Check if a report already exists for this iteration.
+        
+        Returns:
+            True if duplicate exists, False otherwise
+        """
+        reports_json = self.docs_dir / "reports.json"
+        if not reports_json.exists():
+            return False
+            
+        try:
+            with open(reports_json) as f:
+                reports = json.load(f)
+            
+            iteration_slug = (iteration_name or "no-iteration").lower().replace(" ", "-")
+            
+            for report in reports:
+                if (report.get("org_name") == org_name and 
+                    report.get("iteration_name") == iteration_name):
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error checking for duplicates: {e}")
+            return False
+
     async def publish_report(self, 
                       report_content: str,
                       org_name: str,
                       iteration_name: Optional[str] = None,
                       start_date: Optional[str] = None,
-                      end_date: Optional[str] = None) -> Dict[str, str]:
+                      end_date: Optional[str] = None,
+                      skip_duplicate_check: bool = False) -> Dict[str, str]:
         """Publish a new report.
         
         Args:
@@ -122,15 +148,26 @@ class ReportPublisher:
             iteration_name: Name of the iteration/sprint
             start_date: Start date of the iteration
             end_date: End date of the iteration
+            skip_duplicate_check: If True, skip duplicate checking
             
         Returns:
-            Dict containing paths to the published files
+            Dict containing paths to the published files or error info
         """
-        # Generate timestamp and slugified names
+        # Check for duplicates
+        if not skip_duplicate_check and self._check_duplicate_report(org_name, iteration_name):
+            return {
+                "status": "skipped",
+                "message": f"Report already exists for {org_name} - {iteration_name}",
+                "org_name": org_name,
+                "iteration_name": iteration_name
+            }
+        
+        # Generate human-readable timestamp and slugified names
         local_time = self._get_local_time()
-        timestamp = local_time.strftime("%Y%m%d_%H%M%S")
+        # Format: 2025-11-12_3-03-PM
+        readable_time = local_time.strftime("%Y-%m-%d_%I-%M-%p")
         iteration_slug = (iteration_name or "no-iteration").lower().replace(" ", "-")
-        base_name = f"{timestamp}_{org_name}_{iteration_slug}"
+        base_name = f"{readable_time}_{org_name}_{iteration_slug}"
         
         # Save markdown version
         md_path = self.reports_dir / f"{base_name}.md"
@@ -171,9 +208,12 @@ class ReportPublisher:
             web_url = f"../{base_name}.html"
         
         return {
+            "status": "published",
             "markdown": str(md_path),
             "html": str(html_path),
-            "web_url": web_url
+            "web_url": web_url,
+            "org_name": org_name,
+            "iteration_name": iteration_name
         }
 
     def _wrap_html_template(self, content: str, **metadata) -> str:

@@ -2,7 +2,13 @@ version: '3.8'
 
 services:
   github-report-app:
-    build: .
+    build:
+      context: .
+      args:
+        # Use host user ID in dev, defaults to 1000 if not set
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+        USERNAME: ${USERNAME:-appuser}
     ports:
       - "8000:8000"
     environment:
@@ -18,6 +24,8 @@ services:
       # Mount docs and reports directories for persistent storage
       - ./docs:/app/docs
       - ./reports:/app/reports
+      # Mount .git directory for auto-commit/push operations
+      - ./.git:/app/.git
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/github-report"]
