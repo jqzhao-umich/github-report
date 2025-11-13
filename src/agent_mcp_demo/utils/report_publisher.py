@@ -108,30 +108,47 @@ class ReportPublisher:
         with open(self.docs_dir / "index.html", "w") as f:
             f.write(template)
 
-    def _check_duplicate_report(self, org_name: str, iteration_name: Optional[str]) -> bool:
-        """Check if a report already exists for this iteration.
+    def _find_and_remove_old_report(self, org_name: str, iteration_name: Optional[str]) -> Optional[str]:
+        """Find and remove old report files for the same iteration.
         
         Returns:
-            True if duplicate exists, False otherwise
+            Path of the old report that was removed, or None if no old report found
         """
         reports_json = self.docs_dir / "reports.json"
         if not reports_json.exists():
-            return False
+            return None
             
         try:
             with open(reports_json) as f:
                 reports = json.load(f)
             
-            iteration_slug = (iteration_name or "no-iteration").lower().replace(" ", "-")
-            
+            old_report_path = None
             for report in reports:
                 if (report.get("org_name") == org_name and 
                     report.get("iteration_name") == iteration_name):
-                    return True
-            return False
+                    old_report_path = report.get("path")
+                    break
+            
+            if old_report_path:
+                # Remove old HTML file
+                old_html = self.docs_dir / old_report_path
+                if old_html.exists():
+                    old_html.unlink()
+                    print(f"Removed old HTML report: {old_html.name}")
+                
+                # Remove old markdown file (replace .html with .md and check in reports dir)
+                old_md_name = old_report_path.replace('.html', '.md')
+                old_md = self.reports_dir / old_md_name
+                if old_md.exists():
+                    old_md.unlink()
+                    print(f"Removed old markdown report: {old_md.name}")
+                
+                return old_report_path
+            
+            return None
         except Exception as e:
-            print(f"Error checking for duplicates: {e}")
-            return False
+            print(f"Error removing old report: {e}")
+            return None
 
     async def publish_report(self, 
                       report_content: str,
@@ -140,7 +157,7 @@ class ReportPublisher:
                       start_date: Optional[str] = None,
                       end_date: Optional[str] = None,
                       skip_duplicate_check: bool = False) -> Dict[str, str]:
-        """Publish a new report.
+        """Publish a new report, overwriting any existing report for the same iteration.
         
         Args:
             report_content: The report content in markdown format
@@ -148,19 +165,17 @@ class ReportPublisher:
             iteration_name: Name of the iteration/sprint
             start_date: Start date of the iteration
             end_date: End date of the iteration
-            skip_duplicate_check: If True, skip duplicate checking
+            skip_duplicate_check: If True, skip checking and removing old reports
             
         Returns:
-            Dict containing paths to the published files or error info
+            Dict containing paths to the published files or status info
         """
-        # Check for duplicates
-        if not skip_duplicate_check and self._check_duplicate_report(org_name, iteration_name):
-            return {
-                "status": "skipped",
-                "message": f"Report already exists for {org_name} - {iteration_name}",
-                "org_name": org_name,
-                "iteration_name": iteration_name
-            }
+        # Remove old report for the same iteration (if exists)
+        old_report_removed = None
+        if not skip_duplicate_check:
+            old_report_removed = self._find_and_remove_old_report(org_name, iteration_name)
+            if old_report_removed:
+                print(f"Overwriting existing report for {org_name} - {iteration_name}")
         
         # Generate human-readable timestamp and slugified names
         local_time = self._get_local_time()
@@ -262,7 +277,7 @@ class ReportPublisher:
 """
 
     def _update_reports_index(self, report_info: Dict[str, Any]):
-        """Update the reports.json index file."""
+        """Update the reports.json index file, removing any old entry for the same iteration."""
         index_file = self.docs_dir / "reports.json"
         
         if index_file.exists():
@@ -270,7 +285,16 @@ class ReportPublisher:
                 reports = json.load(f)
         else:
             reports = []
-            
+        
+        # Remove old entry for the same org and iteration (if exists)
+        org_name = report_info.get("org_name")
+        iteration_name = report_info.get("iteration_name")
+        reports = [
+            r for r in reports 
+            if not (r.get("org_name") == org_name and r.get("iteration_name") == iteration_name)
+        ]
+        
+        # Add new entry
         reports.append(report_info)
         
         with open(index_file, "w") as f:
