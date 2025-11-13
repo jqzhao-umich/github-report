@@ -1064,43 +1064,41 @@ async def github_report_api():
         if iteration_start and iteration_end:
             report.append(f"Filtered by iteration: {iteration_start.strftime('%Y-%m-%d')} to {iteration_end.strftime('%Y-%m-%d')}")
         
-        # Summary section
-        report.append("\nSUMMARY")
-        report.append("=" * 60)
-        report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13}")
-        report.append("-"*65)
+        # Summary section with proper markdown table
+        report.append("\n# SUMMARY\n")
+        report.append("| User | Commits | Assigned Issues | Closed Issues |")
+        report.append("|------|---------|----------------|---------------|")
         for login, stats in member_stats.items():
-            report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
+            report.append(f"| {login} | {stats['commits']} | {stats['assigned_issues']} | {stats['closed_issues']} |")
         
         # Detailed section for each member
-        report.append("\nDETAILED ACTIVITY")
-        report.append("=" * 60)
+        report.append("\n# DETAILED ACTIVITY\n")
         
         for login, stats in member_stats.items():
             if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
-                report.append(f"\nUser: {login}")
-                report.append("-" * 40)
+                report.append(f"\n## User: {login}\n")
                 
                 # List commits
                 if stats['commits'] > 0:
-                    report.append("\nCommits:")
+                    report.append("**Commits:**\n")
                     for commit_info in commit_details.get(login, []):
                         report.append(f"- [{commit_info['repo']}] {commit_info['message']} ({commit_info['date'].strftime('%Y-%m-%d')})")
+                    report.append("")  # Empty line
                 
                 # List assigned issues
                 if stats['assigned_issues'] > 0:
-                    report.append("\nAssigned Issues:")
+                    report.append("**Assigned Issues:**\n")
                     for issue_info in assigned_issues.get(login, []):
                         status = "Open" if issue_info['state'] == "open" else "Closed"
                         report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} ({status})")
+                    report.append("")  # Empty line
                 
                 # List closed issues
                 if stats['closed_issues'] > 0:
-                    report.append("\nClosed Issues:")
+                    report.append("**Closed Issues:**\n")
                     for issue_info in closed_issues.get(login, []):
                         report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} (Closed on {issue_info['closed_date'].strftime('%Y-%m-%d')})")
-                
-                report.append("")  # Empty line for spacing
+                    report.append("")  # Empty line
         
         # Add report completion time
         report_end_time = datetime.now().astimezone()
