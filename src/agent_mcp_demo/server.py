@@ -4,7 +4,7 @@ import asyncio
 import json
 import httpx
 import requests
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from mcp.server.models import InitializationOptions
 import mcp.types as types
@@ -158,6 +158,9 @@ async def root():
         </div>
         
         <script>
+            // Store the current report content
+            let currentReportContent = null;
+            
             async function loadReport() {
                 const btn = document.querySelector('.primary-btn');
                 const container = document.getElementById('report-container');
@@ -171,11 +174,15 @@ async def root():
                     const data = await response.text();
                     
                     if (response.ok) {
+                        // Store the report content for publishing
+                        currentReportContent = data;
                         container.innerHTML = '<div class="report">' + data + '</div>';
                     } else {
+                        currentReportContent = null;
                         container.innerHTML = '<div class="error">Error: ' + data + '</div>';
                     }
                 } catch (error) {
+                    currentReportContent = null;
                     container.innerHTML = '<div class="error">Error loading report: ' + error.message + '</div>';
                 } finally {
                     btn.disabled = false;
@@ -187,12 +194,29 @@ async def root():
                 const btn = document.querySelector('.success-btn');
                 const container = document.getElementById('report-container');
                 
+                // Check if report is loaded
+                if (!currentReportContent) {
+                    container.insertAdjacentHTML('beforebegin',
+                        '<div class="status-message error">Please load or refresh the report first before publishing.</div>'
+                    );
+                    setTimeout(() => {
+                        document.querySelector('.status-message')?.remove();
+                    }, 5000);
+                    return;
+                }
+                
                 btn.disabled = true;
                 btn.textContent = 'Publishing...';
                 
                 try {
                     const response = await fetch('/api/reports/publish', {
-                        method: 'POST'
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            report_content: currentReportContent
+                        })
                     });
                     const result = await response.json();
                     
@@ -1119,16 +1143,25 @@ async def github_report():
     return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
 
 @app.post("/api/reports/publish", response_class=JSONResponse)
-async def publish_report_endpoint(background_tasks: BackgroundTasks, force: bool = False):
+async def publish_report_endpoint(
+    background_tasks: BackgroundTasks, 
+    request: Request,
+    force: bool = False
+):
     """
     Publish the current report to GitHub Pages.
-    The report will be generated and published asynchronously.
+    The report content should be provided in the request body.
     
     Args:
         force: If True, skip duplicate checking and force publish
     """
     try:
-        report_text = await github_report_api()
+        # Get report content from request body
+        body = await request.json()
+        report_text = body.get('report_content')
+        
+        if not report_text:
+            return JSONResponse({"error": "No report content provided"}, status_code=400)
         
         # Check if the report is an error message (starts with error indicators)
         if isinstance(report_text, str) and (
