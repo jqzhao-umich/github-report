@@ -1,8 +1,7 @@
 name: Generate Iteration Report
 
 on:
-  # Run daily at 11:00 PM EST/EDT (3:00 AM UTC during EDT, 4:00 AM UTC during EST)
-  # Using 11 PM to safely be before midnight in Eastern time year-round
+  # Run daily at 11:00 PM Eastern time to check if it's the scheduled date
   schedule:
     - cron: '0 3 * * *'  # 11 PM EDT (summer)
     - cron: '0 4 * * *'  # 11 PM EST (winter)
@@ -33,8 +32,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
+          pip install pyyaml
           
-      - name: Check if today is iteration end date
+      - name: Check if today is scheduled report date
         id: check_date
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,58 +43,89 @@ jobs:
           python - << 'EOF'
           import os
           import sys
+          import yaml
           from datetime import datetime
           from zoneinfo import ZoneInfo
-          from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+          from pathlib import Path
           
           try:
-              token = os.environ.get("GITHUB_TOKEN")
-              org_name = os.environ.get("GITHUB_ORG_NAME")
-              
-              if not token or not org_name:
-                  print("Missing required environment variables")
-                  sys.exit(1)
-              
-              # Get current iteration info
-              iteration_info = get_current_iteration_info(token, org_name, "Michigan App Team Task Board")
-              
-              if not iteration_info:
-                  print("No active iteration found")
-                  sys.exit(1)
-              
-              # Parse end date
-              end_date_str = iteration_info.get('end_date', '')
-              if not end_date_str:
-                  print("No end date found")
-                  sys.exit(1)
-              
-              # Parse the end date (format: "2025-11-17T00:00:00")
-              # The end date from GitHub Projects is in UTC
-              end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-              
-              # Get current date in Eastern Time (handles EST/EDT automatically)
+              # Get current date in Eastern Time
               eastern = ZoneInfo("America/New_York")
-              today_eastern = datetime.now(eastern)
+              today = datetime.now(eastern).date()
               
-              # Convert end date to Eastern time for comparison
-              end_date_eastern = end_date.astimezone(eastern)
+              print(f"Today (Eastern): {today}")
+              print(f"Current timezone: {datetime.now(eastern).tzname()}")
               
-              print(f"Today (Eastern): {today_eastern.date()}")
-              print(f"End date (Eastern): {end_date_eastern.date()}")
-              print(f"Current timezone: {today_eastern.tzname()}")  # Will show EST or EDT
+              # Read the iteration schedule file
+              schedule_file = Path(".github/iteration-schedule.yml")
               
-              # Check if today is the end date (comparing dates in Eastern time)
-              if today_eastern.date() == end_date_eastern.date():
-                  print("Today is the iteration end date!")
-                  print("should_generate=true")
-                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                      f.write('should_generate=true\n')
-                      f.write(f'iteration_name={iteration_info.get("name", "")}\n')
+              if not schedule_file.exists():
+                  print("Schedule file not found, will check GitHub Projects")
+                  scheduled_date = None
               else:
-                  print(f"Not the end date yet")
-                  print("should_generate=false")
-                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  with open(schedule_file) as f:
+                      config = yaml.safe_load(f)
+                  
+                  scheduled_date_str = config.get('next_iteration_end_date')
+                  if scheduled_date_str:
+                      from datetime import date
+                      scheduled_date = date.fromisoformat(scheduled_date_str)
+                      print(f"Scheduled report date: {scheduled_date}")
+                  else:
+                      print("No scheduled date in config")
+                      scheduled_date = None
+              
+              # Check if today matches the scheduled date
+              should_generate = False
+              iteration_name = None
+              
+              if scheduled_date and today == scheduled_date:
+                  print("✓ Today matches the scheduled date!")
+                  should_generate = True
+                  # Read iteration name from config
+                  if schedule_file.exists():
+                      with open(schedule_file) as f:
+                          config = yaml.safe_load(f)
+                      iteration_name = config.get('next_iteration_name', 'Unknown')
+              else:
+                  print("Today does not match the scheduled date")
+                  print("Checking GitHub Projects for current iteration end date...")
+                  
+                  # Fallback: Check GitHub Projects if no schedule or date doesn't match
+                  from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+                  
+                  token = os.environ.get("GITHUB_TOKEN")
+                  org_name = os.environ.get("GITHUB_ORG_NAME")
+                  
+                  if token and org_name:
+                      iteration_info = get_current_iteration_info(token, org_name, "Michigan App Team Task Board")
+                      
+                      if iteration_info:
+                          end_date_str = iteration_info.get('end_date', '')
+                          if end_date_str:
+                              end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                              end_date_eastern = end_date.astimezone(eastern).date()
+                              
+                              print(f"Current iteration end date from GitHub: {end_date_eastern}")
+                              
+                              if today == end_date_eastern:
+                                  print("✓ Today is the iteration end date from GitHub Projects!")
+                                  should_generate = True
+                                  iteration_name = iteration_info.get('name', 'Unknown')
+              
+              # Write output
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  if should_generate:
+                      f.write('should_generate=true\n')
+                      f.write(f'iteration_name={iteration_name or "Unknown"}\n')
+                  else:
                       f.write('should_generate=false\n')
+              
+              if should_generate:
+                  print("→ Will generate report")
+              else:
+                  print("→ Skipping report generation")
+                  
           except Exception as e:
               print(f"Error checking date: {e}")
               import traceback
@@ -165,13 +196,83 @@ jobs:
           exit(0 if success else 1)
           EOF
           
+      - name: Update schedule for next iteration
+        if: steps.check_date.outputs.should_generate == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ORG_NAME: ${{ secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+        run: |
+          python - << 'EOF'
+          import os
+          import yaml
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from pathlib import Path
+          from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+          
+          try:
+              token = os.environ.get("GITHUB_TOKEN")
+              org_name = os.environ.get("GITHUB_ORG_NAME")
+              
+              if not token or not org_name:
+                  print("Missing required environment variables")
+                  exit(0)  # Don't fail the workflow
+              
+              # Get next iteration info from GitHub Projects
+              iteration_info = get_current_iteration_info(token, org_name, "Michigan App Team Task Board")
+              
+              if not iteration_info:
+                  print("No next iteration found, clearing schedule")
+                  schedule_data = {
+                      'next_iteration_end_date': None,
+                      'next_iteration_name': None,
+                      'last_updated': datetime.now(ZoneInfo("America/New_York")).isoformat()
+                  }
+              else:
+                  end_date_str = iteration_info.get('end_date', '')
+                  if end_date_str:
+                      # Parse and convert to date only (YYYY-MM-DD)
+                      end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                      end_date_eastern = end_date.astimezone(ZoneInfo("America/New_York"))
+                      
+                      schedule_data = {
+                          'next_iteration_end_date': end_date_eastern.date().isoformat(),
+                          'next_iteration_name': iteration_info.get('name', 'Unknown'),
+                          'last_updated': datetime.now(ZoneInfo("America/New_York")).isoformat()
+                      }
+                      
+                      print(f"Updated schedule for next iteration: {schedule_data['next_iteration_name']}")
+                      print(f"Next report date: {schedule_data['next_iteration_end_date']}")
+                  else:
+                      print("No end date found for next iteration")
+                      schedule_data = {
+                          'next_iteration_end_date': None,
+                          'next_iteration_name': None,
+                          'last_updated': datetime.now(ZoneInfo("America/New_York")).isoformat()
+                      }
+              
+              # Write to schedule file
+              schedule_file = Path(".github/iteration-schedule.yml")
+              with open(schedule_file, 'w') as f:
+                  yaml.dump(schedule_data, f, default_flow_style=False)
+              
+              print("Schedule file updated successfully")
+              
+          except Exception as e:
+              print(f"Error updating schedule: {e}")
+              import traceback
+              traceback.print_exc()
+              # Don't fail the workflow if schedule update fails
+              exit(0)
+          EOF
+          
       - name: Commit and push reports
         if: steps.check_date.outputs.should_generate == 'true'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          git add docs/ reports/
+          git add docs/ reports/ .github/iteration-schedule.yml
           
           if git diff --staged --quiet; then
             echo "No changes to commit"
@@ -179,6 +280,7 @@ jobs:
             git commit -m "Auto-generate report for ${{ steps.check_date.outputs.iteration_name }}
 
 Generated by GitHub Actions on iteration end date
+Updated schedule for next iteration
 $(date +'%Y-%m-%d %H:%M:%S %Z')"
             git push
           fi

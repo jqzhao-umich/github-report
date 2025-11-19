@@ -1,0 +1,8 @@
+# Iteration Schedule Configuration
+
+# This file is automatically updated when a report is generated.
+# The GitHub Action will only run on the date specified below.
+
+next_iteration_end_date: null  # Format: YYYY-MM-DD (e.g., 2025-11-17)
+next_iteration_name: null       # Name of the next iteration
+last_updated: null              # When this file was last updated
