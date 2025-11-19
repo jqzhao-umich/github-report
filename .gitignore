@@ -68,3 +68,9 @@ doc/_build/
 # OS-specific
 .DS_Store
 Thumbs.db
+
+# Development artifacts
+server.log
+sample_data.json
+run/
+agent_mcp_demo/  # Old structure, replaced by src/agent_mcp_demo

@@ -147,18 +147,27 @@ Note: The manual method doesn't provide the logging and process management featu
 
 ```
 src/agent_mcp_demo/
-├── agents/
-│   ├── __init__.py
-│   ├── base.py           # Base agent class with common functionality
-│   ├── config.py         # Configuration management
-│   ├── types.py          # Type definitions
-│   ├── utils.py          # Shared utilities
-│   ├── core_agent.py     # Core agent implementation
-│   ├── github_agent.py   # GitHub integration agent
-│   ├── web_interface_agent.py  # Web UI agent
-│   └── main_coordinator.py     # Agent coordinator
-├── logging_config.json   # Logging configuration
-└── tests/               # Test directory
+├── agents/               # MCP agent implementations
+│   ├── base.py          # Base agent class
+│   ├── config.py        # Configuration management
+│   ├── core_agent.py    # Core agent
+│   ├── github_agent.py  # GitHub integration
+│   ├── main_coordinator.py  # Agent coordinator
+│   └── web_interface_agent.py  # Web interface
+├── routes/              # FastAPI route handlers
+│   └── reports.py       # Report generation endpoints
+├── utils/               # Utility modules
+│   ├── git_operations.py    # Git commit/push operations
+│   ├── report_publisher.py  # Report publishing logic
+│   └── report_scheduler.py  # Automated scheduling
+├── server.py            # FastAPI server
+└── logging_config.json  # Logging configuration
+
+tests/                   # Test suite (92 tests)
+├── agent_mcp_demo/
+│   ├── agents/          # Agent tests
+│   └── utils/           # Utility tests
+└── test_iteration_schedule_system.py
 ```
 
 ### Adding a New Agent
@@ -216,13 +225,43 @@ async def handle_call_tool(
 
 ## Testing
 
+### Test Coverage Overview
+
+The project has **comprehensive test coverage with 92 tests** across all critical infrastructure components:
+
+- **ReportPublisher Tests** (13 tests) - Report generation, overwrite logic, duplicate handling
+- **POST Body Endpoint Tests** (14 tests) - Request validation, error handling, background tasks  
+- **ReportScheduler Tests** (18 tests) - Iteration detection, timezone handling, automated scheduling
+- **Iteration Schedule System Tests** (22 tests) - YAML operations, date logic, DST transitions
+- **GitOperations Tests** (25 tests) - Commit/push operations, error handling, branch management
+
 ### Running Tests
+
+#### Using Docker (Recommended)
+
+Run tests in the containerized environment:
+
+```bash
+# Run all tests
+docker compose exec github-report-app python -m pytest
+
+# Run tests with verbose output
+docker compose exec github-report-app python -m pytest -v
+
+# Run specific test file
+docker compose exec github-report-app python -m pytest tests/agent_mcp_demo/utils/test_report_publisher.py -v
+
+# Run tests with coverage
+docker compose exec github-report-app python -m pytest --cov=agent_mcp_demo --cov-report=term-missing
+```
+
+#### Local Development
 
 1. Set up the test environment:
    ```bash
    # Create and activate virtual environment
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
    # Install all dependencies including test requirements
    pip install -r requirements.txt
@@ -243,126 +282,52 @@ async def handle_call_tool(
    pytest --cov=agent_mcp_demo --cov-report=term-missing
    ```
 
-3. Run Tests by Category:
+3. Run Tests by Component:
    ```bash
-   # Run unit tests only
-   pytest tests/test_base.py         # Base agent tests
-   pytest tests/test_github_agent.py # GitHub agent tests
-   pytest tests/test_web_interface.py # Web interface tests
-
-   # Run integration tests
-   pytest -m integration
-
-   # Run performance tests
-   pytest -m performance
-
-   # Skip slow tests
-   pytest -m "not slow"
+   # Report publishing infrastructure
+   pytest tests/agent_mcp_demo/utils/test_report_publisher.py -v
+   
+   # Automated scheduling
+   pytest tests/agent_mcp_demo/utils/test_report_scheduler.py -v
+   
+   # Git operations
+   pytest tests/agent_mcp_demo/utils/test_git_operations.py -v
+   
+   # Iteration schedule system
+   pytest tests/test_iteration_schedule_system.py -v
+   
+   # POST endpoint tests
+   pytest tests/agent_mcp_demo/agents/test_web_interface_publishing.py -v
 
    # Run specific test function
-   pytest tests/test_base.py::test_base_agent_initialization
+   pytest tests/agent_mcp_demo/utils/test_report_publisher.py::test_publish_report_success -v
    ```
 
-4. Performance Testing:
-   ```bash
-   # Run all performance tests
-   pytest -m performance
-
-   # Run benchmarks only
-   pytest --benchmark-only tests/test_performance.py
-
-   # Run benchmarks and generate HTML report
-   pytest --benchmark-only --benchmark-html=benchmark.html
-
-   # Compare with previous benchmark
-   pytest --benchmark-compare=0001
-
-   # Run memory usage tests
-   pytest -m memory
-   ```
-
-5. Coverage and Reporting:
-   ```bash
-   # Generate HTML coverage report
-   pytest --cov=agent_mcp_demo --cov-report=html
-
-   # Generate XML coverage report (for CI tools)
-   pytest --cov=agent_mcp_demo --cov-report=xml
-
-   # Run tests and show missing lines
-   pytest --cov=agent_mcp_demo --cov-report=term-missing
-   ```
-
-6. Test Configuration:
-   ```bash
-   # Run tests with different log levels
-   pytest --log-cli-level=DEBUG
-
-   # Run tests in parallel
-   pytest -n auto
-
-   # Run tests with custom markers
-   pytest -m "integration and not slow"
-   ```
-
-7. Continuous Integration:
-   ```bash
-   # Run all tests and generate reports (for CI)
-   pytest --cov=agent_mcp_demo --cov-report=xml --benchmark-json=benchmark.json -v
-   ```
-
-### Available Test Markers
-
-- `integration`: Integration tests that check multiple components
-- `performance`: Performance and benchmark tests
-- `slow`: Tests that take longer to run
-- `memory`: Memory usage tests
-- `concurrent`: Tests for concurrent operations
-- `network`: Tests requiring network access
-
-### Test Output Directory Structure
-
-After running tests, you'll find:
-- `htmlcov/`: HTML coverage reports
-- `.coverage`: Coverage data file
-- `benchmark.json`: Benchmark results
-- `benchmark.html`: HTML benchmark report
-- `coverage.xml`: Coverage report in XML format
-
-### Performance Testing
-
-The project includes comprehensive performance tests:
-
-1. **Response Time Tests**
-   - Report generation timing
-   - Agent initialization speed
-   - API response latency
-
-2. **Concurrency Tests**
-   - Multiple simultaneous requests
-   - Rate limiting behavior
-   - Resource contention
-
-3. **Resource Usage Tests**
-   - Memory consumption monitoring
-   - CPU utilization tracking
-   - Network bandwidth usage
-
-4. **Integration Performance**
-   - End-to-end timing
-   - Inter-agent communication speed
-   - Error handling overhead
-
-4. Generate coverage report:
+4. Coverage and Reporting:
    ```bash
    pytest --cov=agent_mcp_demo --cov-report=html
    ```
 
 ### Test Structure
 
-- `tests/test_base.py`: Tests for base agent functionality
-- `tests/test_github_agent.py`: GitHub integration tests
-- `tests/test_web_interface.py`: Web interface tests
+```
+tests/
+├── agent_mcp_demo/
+│   ├── agents/
+│   │   └── test_web_interface_publishing.py  # POST endpoint tests (14 tests)
+│   └── utils/
+│       ├── test_report_publisher.py          # Report generation tests (13 tests)
+│       ├── test_report_scheduler.py          # Scheduler tests (18 tests)
+│       └── test_git_operations.py            # Git operations tests (25 tests)
+└── test_iteration_schedule_system.py         # Schedule system tests (22 tests)
+```
+
+**Key Test Features:**
+- Comprehensive mocking for isolated unit tests
+- Timezone-aware datetime testing (EST/EDT, UTC)
+- Async test support with pytest-asyncio
+- Temporary file fixtures for safe test isolation
+- Error handling and edge case coverage
 
 ### Writing Tests
 
