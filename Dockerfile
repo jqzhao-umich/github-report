@@ -16,7 +16,7 @@ COPY src/ ./src/
 # Install Python dependencies
 RUN pip install --upgrade pip && \
     pip install -e . && \
-    pip install requests PyGithub
+    pip install requests PyGithub pytest pytest-asyncio
 
 # Set environment variables
 ENV PYTHONPATH=/app/src

@@ -21,6 +21,8 @@ services:
     volumes:
       # Mount source code for development (optional)
       - ./src:/app/src:ro
+      # Mount tests directory for testing
+      - ./tests:/app/tests:ro
       # Mount docs and reports directories for persistent storage
       - ./docs:/app/docs
       - ./reports:/app/reports
