@@ -1,9 +1,11 @@
 name: Generate Iteration Report
 
 on:
-  # Run daily at 11:59 PM EST (4:59 AM UTC next day)
+  # Run daily at 11:00 PM EST/EDT (3:00 AM UTC during EDT, 4:00 AM UTC during EST)
+  # Using 11 PM to safely be before midnight in Eastern time year-round
   schedule:
-    - cron: '59 4 * * *'
+    - cron: '0 3 * * *'  # 11 PM EDT (summer)
+    - cron: '0 4 * * *'  # 11 PM EST (winter)
   # Allow manual trigger
   workflow_dispatch:
 
@@ -41,7 +43,8 @@ jobs:
           python - << 'EOF'
           import os
           import sys
-          from datetime import datetime, timezone
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
           from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
           
           try:
@@ -66,18 +69,29 @@ jobs:
                   sys.exit(1)
               
               # Parse the end date (format: "2025-11-17T00:00:00")
+              # The end date from GitHub Projects is in UTC
               end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-              today = datetime.now(timezone.utc)
               
-              # Check if today is the end date
-              if today.date() == end_date.date():
+              # Get current date in Eastern Time (handles EST/EDT automatically)
+              eastern = ZoneInfo("America/New_York")
+              today_eastern = datetime.now(eastern)
+              
+              # Convert end date to Eastern time for comparison
+              end_date_eastern = end_date.astimezone(eastern)
+              
+              print(f"Today (Eastern): {today_eastern.date()}")
+              print(f"End date (Eastern): {end_date_eastern.date()}")
+              print(f"Current timezone: {today_eastern.tzname()}")  # Will show EST or EDT
+              
+              # Check if today is the end date (comparing dates in Eastern time)
+              if today_eastern.date() == end_date_eastern.date():
                   print("Today is the iteration end date!")
                   print("should_generate=true")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                       f.write('should_generate=true\n')
                       f.write(f'iteration_name={iteration_info.get("name", "")}\n')
               else:
-                  print(f"Today ({today.date()}) is not the end date ({end_date.date()})")
+                  print(f"Not the end date yet")
                   print("should_generate=false")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                       f.write('should_generate=false\n')
