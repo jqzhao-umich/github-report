@@ -49,8 +49,8 @@ This project is a Model Context Protocol (MCP) server implementation that genera
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/jqzhao-umich/copilot-aidevday-2025.git
-   cd copilot-aidevday-2025
+   git clone https://github.com/jqzhao-umich/github-report.git
+   cd github-report
    ```
 
 2. Create a virtual environment:
@@ -498,7 +498,7 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
       "command": "uv",
       "args": [
         "--directory",
-        "/Users/jqzhao/projects/copilot-aidevday-2025",
+        "/Users/jqzhao/projects/github-report",
         "run",
         "agent-mcp-demo"
       ]
@@ -611,7 +611,7 @@ experience, we strongly recommend using the [MCP Inspector](https://github.com/m
 You can launch the MCP Inspector via [`npm`](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) with this command:
 
 ```bash
-npx @modelcontextprotocol/inspector uv --directory /Users/jqzhao/projects/copilot-aidevday-2025 run agent-mcp-demo
+npx @modelcontextprotocol/inspector uv --directory /Users/jqzhao/projects/github-report run agent-mcp-demo
 ```
 
 

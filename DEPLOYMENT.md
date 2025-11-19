@@ -193,13 +193,13 @@ docker compose logs
 ### Reports not generating
 Check environment variables:
 ```bash
-docker exec copilot-aidevday-2025-github-report-app-1 env | grep GITHUB
+docker exec github-report-github-report-app-1 env | grep GITHUB
 ```
 
 ### Scheduler not running
 Check logs for scheduler initialization:
 ```bash
-docker logs copilot-aidevday-2025-github-report-app-1 | grep -i scheduler
+docker logs github-report-github-report-app-1 | grep -i scheduler
 ```
 
 ### Git operations failing
@@ -219,7 +219,7 @@ ls -lt docs/*.html | head -3
 ### Test Scheduler
 Check logs:
 ```bash
-docker logs copilot-aidevday-2025-github-report-app-1 | grep "Checking for iteration end"
+docker logs github-report-github-report-app-1 | grep "Checking for iteration end"
 ```
 
 ### Test Duplicate Detection
@@ -229,7 +229,7 @@ curl -X POST http://localhost:8000/api/reports/publish
 curl -X POST http://localhost:8000/api/reports/publish
 
 # Second should show "skipped" status in logs
-docker logs copilot-aidevday-2025-github-report-app-1 | grep "already exists"
+docker logs github-report-github-report-app-1 | grep "already exists"
 ```
 
 ---
