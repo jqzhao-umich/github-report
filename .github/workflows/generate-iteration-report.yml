@@ -1,0 +1,177 @@
+name: Generate Iteration Report
+
+on:
+  # Run daily at 11:59 PM EST (4:59 AM UTC next day)
+  schedule:
+    - cron: '59 4 * * *'
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: report-publish
+          
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          
+      - name: Check if today is iteration end date
+        id: check_date
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ORG_NAME: ${{ secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+        run: |
+          python - << 'EOF'
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+          
+          try:
+              token = os.environ.get("GITHUB_TOKEN")
+              org_name = os.environ.get("GITHUB_ORG_NAME")
+              
+              if not token or not org_name:
+                  print("Missing required environment variables")
+                  sys.exit(1)
+              
+              # Get current iteration info
+              iteration_info = get_current_iteration_info(token, org_name, "Michigan App Team Task Board")
+              
+              if not iteration_info:
+                  print("No active iteration found")
+                  sys.exit(1)
+              
+              # Parse end date
+              end_date_str = iteration_info.get('end_date', '')
+              if not end_date_str:
+                  print("No end date found")
+                  sys.exit(1)
+              
+              # Parse the end date (format: "2025-11-17T00:00:00")
+              end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+              today = datetime.now(timezone.utc)
+              
+              # Check if today is the end date
+              if today.date() == end_date.date():
+                  print("Today is the iteration end date!")
+                  print("should_generate=true")
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('should_generate=true\n')
+                      f.write(f'iteration_name={iteration_info.get("name", "")}\n')
+              else:
+                  print(f"Today ({today.date()}) is not the end date ({end_date.date()})")
+                  print("should_generate=false")
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('should_generate=false\n')
+          except Exception as e:
+              print(f"Error checking date: {e}")
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
+          EOF
+          
+      - name: Generate and publish report
+        if: steps.check_date.outputs.should_generate == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ORG_NAME: ${{ secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+        run: |
+          python - << 'EOF'
+          import asyncio
+          import os
+          from agent_mcp_demo.server import github_report_api
+          from agent_mcp_demo.utils.report_publisher import ReportPublisher
+          
+          async def main():
+              # Generate report
+              print("Generating report...")
+              report_content = await github_report_api()
+              
+              # Check if report generation was successful
+              if report_content.startswith("GitHub token not set") or \
+                 report_content.startswith("Unexpected error:"):
+                  print(f"Error generating report: {report_content}")
+                  return False
+              
+              # Parse iteration info from report
+              lines = report_content.split("\n")
+              org_name = None
+              iteration_name = None
+              start_date = None
+              end_date = None
+              
+              for i, line in enumerate(lines):
+                  if line.startswith("GitHub Organization:"):
+                      org_name = line.split(": ", 1)[1].strip()
+                  elif "Iteration Name:" in line:
+                      iteration_name = line.split(":", 1)[1].strip()
+                  elif "Start Date:" in line:
+                      start_date = line.split(":", 1)[1].strip()
+                  elif "End Date:" in line:
+                      end_date = line.split(":", 1)[1].strip()
+              
+              if not org_name:
+                  print("Could not parse organization name from report")
+                  return False
+              
+              # Publish report
+              print(f"Publishing report for {org_name} - {iteration_name}")
+              publisher = ReportPublisher()
+              result = await publisher.publish_report(
+                  report_content=report_content,
+                  org_name=org_name,
+                  iteration_name=iteration_name,
+                  start_date=start_date,
+                  end_date=end_date,
+                  skip_duplicate_check=False
+              )
+              
+              print(f"Publish result: {result}")
+              return result.get("status") == "published"
+          
+          success = asyncio.run(main())
+          exit(0 if success else 1)
+          EOF
+          
+      - name: Commit and push reports
+        if: steps.check_date.outputs.should_generate == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add docs/ reports/
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-generate report for ${{ steps.check_date.outputs.iteration_name }}
+
+Generated by GitHub Actions on iteration end date
+$(date +'%Y-%m-%d %H:%M:%S %Z')"
+            git push
+          fi
+          
+      - name: Summary
+        if: steps.check_date.outputs.should_generate == 'true'
+        run: |
+          echo "✅ Successfully generated and published report for ${{ steps.check_date.outputs.iteration_name }}"
+          echo "📄 Files committed to repository"
+          echo "🌐 GitHub Pages will update automatically"
