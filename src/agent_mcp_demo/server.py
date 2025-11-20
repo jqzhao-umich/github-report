@@ -13,7 +13,7 @@ from mcp.server import NotificationOptions, Server
 from pydantic import AnyUrl
 import mcp.server.stdio
 import os
-from github import Github
+from github import Github, Auth
 from dotenv import load_dotenv
 from pathlib import Path
 import sys
@@ -785,7 +785,8 @@ async def github_report_api():
         # Test GitHub connection with timeout
         import asyncio
         from datetime import datetime, timezone, timedelta
-        g = Github(GITHUB_TOKEN, timeout=5)  # Short timeout for testing
+        auth = Auth.Token(GITHUB_TOKEN)
+        g = Github(auth=auth, timeout=5)  # Short timeout for testing
         
         # Test the connection by getting user info
         try:

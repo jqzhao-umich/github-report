@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger('github-agent')
 try:
-    from github import Github
+    from github import Github, Auth
 except ImportError:
     raise ImportError("PyGithub is required. Install it with: pip install PyGithub")
 
@@ -296,7 +296,8 @@ async def handle_call_tool(
             print(f"Getting GitHub data for org: {org_name} with iteration info: {iteration_info}")
             
             try:
-                g = Github(GITHUB_TOKEN)
+                auth = Auth.Token(GITHUB_TOKEN)
+                g = Github(auth=auth)
                 
                 # Test GitHub connection first
                 user = g.get_user()
@@ -457,10 +458,10 @@ async def main():
                 server_version="0.1.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
-                experimental_capabilities={},
+                    experimental_capabilities={},
+                ),
             ),
-        ),
-    )
+        )
 
 if __name__ == "__main__":
     import asyncio
