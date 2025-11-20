@@ -33,17 +33,49 @@ To ensure the GitHub Actions can push commits:
    - "Require status checks to pass before merging" is configured as needed
    - Add `github-actions[bot]` to the list of users who can bypass restrictions if needed
 
-### Step 3: Verify Secrets and Variables
+### Step 3: Configure Secrets and Permissions
 
-1. Go to **Settings** → **Secrets and variables** → **Actions**
+#### A. Create a Personal Access Token (PAT)
+
+The default `GITHUB_TOKEN` doesn't have permissions to access organization projects. You need to create a Personal Access Token:
+
+1. Go to GitHub **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)**
+2. Click **Generate new token (classic)**
+3. Give it a name: `github-report-workflow`
+4. Set expiration (e.g., 90 days or No expiration)
+5. Select the following scopes:
+   - ✅ `repo` (Full control of private repositories)
+   - ✅ `read:org` (Read org and team membership, read org projects)
+   - ✅ `read:project` (Read access to projects)
+6. Click **Generate token**
+7. **Copy the token immediately** (you won't be able to see it again)
+
+#### B. Add Repository Secrets
+
+1. Go to your repository **Settings** → **Secrets and variables** → **Actions**
 
 2. Add the following **Repository Secrets**:
-   - `GITHUB_TOKEN` - This is automatically provided by GitHub Actions (no need to add)
-   - `ORG_NAME` - Your organization name (e.g., `WeMoAD-umich`)
+   
+   **Required secrets:**
+   - `GH_PAT` - Your Personal Access Token from step A
+     - Click "New repository secret"
+     - Name: `GH_PAT`
+     - Value: (paste your PAT token)
+     - Click "Add secret"
+   
+   - `ORG_NAME` - Your organization name
      - Click "New repository secret"
      - Name: `ORG_NAME`
      - Value: `WeMoAD-umich`
      - Click "Add secret"
+
+#### C. Update Workflow Permissions
+
+1. Go to **Settings** → **Actions** → **General**
+2. Scroll down to **Workflow permissions**
+3. Select **"Read and write permissions"**
+4. Check ✅ **"Allow GitHub Actions to create and approve pull requests"**
+5. Click **Save**
 
 ### Step 4: Update the Iteration Schedule
 
@@ -103,9 +135,11 @@ The workflow runs automatically every night at 11 PM Eastern Time. If today matc
   - Check "Allow GitHub Actions to create and approve pull requests"
 
 ### Workflow failing
-- Check if `ORG_NAME` secret is set correctly
+- Check if `GH_PAT` secret is set correctly with required permissions (repo, read:org, read:project)
+- Check if `ORG_NAME` secret is set correctly (should be `WeMoAD-umich`)
 - Verify the `main` branch exists
 - Check workflow logs in the **Actions** tab for specific errors
+- Ensure the PAT token hasn't expired
 
 ### Reports not updating
 - Verify the iteration end date in `.github/iteration-schedule.yml`

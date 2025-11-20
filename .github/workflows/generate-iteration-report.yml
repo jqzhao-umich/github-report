@@ -37,7 +37,7 @@ jobs:
       - name: Check if today is scheduled report date
         id: check_date
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
         run: |
           python - << 'EOF'
@@ -159,7 +159,7 @@ jobs:
       - name: Generate and publish report
         if: steps.check_date.outputs.should_generate == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
         run: |
           python - << 'EOF'
@@ -222,7 +222,7 @@ jobs:
       - name: Update schedule for next iteration
         if: steps.check_date.outputs.should_generate == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
         run: |
           python - << 'EOF'
