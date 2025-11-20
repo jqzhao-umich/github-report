@@ -28,7 +28,7 @@ This guide will help you set up GitHub Pages for your repository to deploy the g
 To ensure the GitHub Actions can push commits:
 
 1. Go to **Settings** → **Branches**
-2. If you have branch protection rules for `report-publish`, make sure:
+2. If you have branch protection rules for `main`, make sure:
    - "Allow force pushes" is disabled (for safety)
    - "Require status checks to pass before merging" is configured as needed
    - Add `github-actions[bot]` to the list of users who can bypass restrictions if needed
@@ -65,7 +65,7 @@ You can either:
 
 1. Go to **Actions** tab in your repository
 2. Click on "Generate Iteration Report" workflow
-3. Click **Run workflow** → Select branch `report-publish` → **Run workflow**
+3. Click **Run workflow** → Select branch `main` → **Run workflow**
 4. Wait for the workflow to complete
 5. Go to **Actions** → "Deploy Reports to GitHub Pages" (should trigger automatically)
 6. Once deployed, visit: https://jqzhao-umich.github.io/github-report/
@@ -88,7 +88,7 @@ The workflow runs automatically every night at 11 PM Eastern Time. If today matc
 - **Output**: Commits to `docs/` and `reports/` folders
 
 ### Deploy Pages Workflow
-- **Trigger**: When `docs/` folder changes on `report-publish` branch
+- **Trigger**: When `docs/` folder changes on `main` branch
 - **Action**: Deploys content to GitHub Pages
 - **URL**: https://jqzhao-umich.github.io/github-report/
 
@@ -104,7 +104,7 @@ The workflow runs automatically every night at 11 PM Eastern Time. If today matc
 
 ### Workflow failing
 - Check if `ORG_NAME` secret is set correctly
-- Verify the `report-publish` branch exists
+- Verify the `main` branch exists
 - Check workflow logs in the **Actions** tab for specific errors
 
 ### Reports not updating
