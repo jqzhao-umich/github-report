@@ -49,6 +49,29 @@ jobs:
           from pathlib import Path
           
           try:
+              # Check if this is a manual trigger
+              is_manual = '${{ github.event_name }}' == 'workflow_dispatch'
+              
+              if is_manual:
+                  print("Manual workflow trigger detected - will generate report regardless of date")
+                  should_generate = True
+                  iteration_name = "Manual Run"
+                  
+                  # Try to get iteration info from schedule file
+                  schedule_file = Path(".github/iteration-schedule.yml")
+                  if schedule_file.exists():
+                      with open(schedule_file) as f:
+                          config = yaml.safe_load(f)
+                      iteration_name = config.get('next_iteration_name', 'Manual Run')
+                  
+                  # Write output
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('should_generate=true\n')
+                      f.write(f'iteration_name={iteration_name}\n')
+                  
+                  print(f"→ Will generate report for: {iteration_name}")
+                  sys.exit(0)
+              
               # Get current date in Eastern Time
               eastern = ZoneInfo("America/New_York")
               today = datetime.now(eastern).date()
