@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from zoneinfo import ZoneInfo
-from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+from agent_mcp_demo.server import get_current_iteration_info
 from dotenv import load_dotenv
 
 def main():

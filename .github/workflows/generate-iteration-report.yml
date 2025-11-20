@@ -115,7 +115,7 @@ jobs:
                   print("Checking GitHub Projects for current iteration end date...")
                   
                   # Fallback: Check GitHub Projects if no schedule or date doesn't match
-                  from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+                  from agent_mcp_demo.server import get_current_iteration_info
                   
                   token = os.environ.get("GITHUB_TOKEN")
                   org_name = os.environ.get("GITHUB_ORG_NAME")
@@ -231,7 +231,7 @@ jobs:
           from datetime import datetime
           from zoneinfo import ZoneInfo
           from pathlib import Path
-          from agent_mcp_demo.utils.github_projects_api import get_current_iteration_info
+          from agent_mcp_demo.server import get_current_iteration_info
           
           try:
               token = os.environ.get("GITHUB_TOKEN")
