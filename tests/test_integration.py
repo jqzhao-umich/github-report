@@ -6,7 +6,6 @@ from agent_mcp_demo.agents.base import BaseMCPAgent
 from agent_mcp_demo.agents.types import GitHubData, IterationInfo
 from agent_mcp_demo.agents.config import settings
 
-@pytest.mark.integration
 @pytest.fixture
 async def running_agents():
     """Fixture to start all agents for integration testing"""

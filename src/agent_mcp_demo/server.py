@@ -4,6 +4,7 @@ import asyncio
 import json
 import httpx
 import requests
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from mcp.server.models import InitializationOptions
@@ -31,20 +32,17 @@ from agent_mcp_demo.utils.report_scheduler import ReportScheduler
 publisher = ReportPublisher()
 git_ops = GitOperations()
 
-# Add FastAPI app for HTTP endpoints
-app = FastAPI()
-
 # Initialize scheduler (will be started in lifespan event)
 scheduler = None
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize and start the report scheduler on app startup."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - startup and shutdown."""
     global scheduler
     import logging
     logging.basicConfig(level=logging.INFO)
     
-    # Create scheduler with callbacks
+    # Startup
     scheduler = ReportScheduler(
         report_generator_callback=github_report_api,
         publish_callback=lambda report_text, org_name, iteration_name, skip_duplicate_check: 
@@ -60,13 +58,15 @@ async def startup_event():
     )
     scheduler.start()
     logging.info("Application started with automatic report scheduling")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Stop the scheduler on app shutdown."""
-    global scheduler
+    
+    yield
+    
+    # Shutdown
     if scheduler:
         scheduler.stop()
+
+# Add FastAPI app for HTTP endpoints
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/", response_class=HTMLResponse)
 async def root():

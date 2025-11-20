@@ -5,14 +5,13 @@ Base MCP agent implementation with common functionality
 import logging
 import asyncio
 from typing import Optional, Any, List, Union
-from mcp import Server
+from mcp.server import Server, NotificationOptions
+from mcp.server.models import InitializationOptions
 from mcp.types import (
     TextContent, InitializeResult, ServerCapabilities, 
-    NotificationOptions, Tool, Resource
+    Tool, Resource
 )
-import logging
-from typing import Optional, Any
-import asyncio
+import mcp.types
 from .config import settings
 
 class BaseMCPAgent:
@@ -66,7 +65,7 @@ class BaseMCPAgent:
         tool: str, 
         arguments: Optional[dict] = None,
         retry_count: int = 0
-    ) -> list[types.TextContent]:
+    ) -> list[mcp.types.TextContent]:
         """Call another agent's tool with retry logic"""
         try:
             return await self.server.request_context.session.call_tool(

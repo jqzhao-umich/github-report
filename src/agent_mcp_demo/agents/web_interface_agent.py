@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from mcp.server import Server, NotificationOptions
 
 # Set up logging
+os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

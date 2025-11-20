@@ -4,7 +4,7 @@ Configuration management for MCP agents
 
 from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, ConfigDict
 from pathlib import Path
 import json
 
@@ -30,9 +30,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "mcp_server.log"
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8"
+    )
 
 def load_logging_config() -> dict:
     """Load logging configuration from JSON file"""
