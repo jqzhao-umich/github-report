@@ -3,7 +3,7 @@ name: Deploy Reports to GitHub Pages
 on:
   push:
     branches:
-      - report-publish
+      - main
     paths:
       - 'docs/**'
   workflow_dispatch:
@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: report-publish
+          ref: main
       
       - name: Setup Pages
         uses: actions/configure-pages@v4
