@@ -38,7 +38,7 @@ jobs:
         id: check_date
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ORG_NAME: ${{ secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+          GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
         run: |
           python - << 'EOF'
           import os
@@ -137,7 +137,7 @@ jobs:
         if: steps.check_date.outputs.should_generate == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ORG_NAME: ${{ secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+          GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
         run: |
           python - << 'EOF'
           import asyncio
@@ -200,7 +200,7 @@ jobs:
         if: steps.check_date.outputs.should_generate == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ORG_NAME: ${{ secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+          GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
         run: |
           python - << 'EOF'
           import os

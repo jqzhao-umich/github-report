@@ -39,9 +39,9 @@ To ensure the GitHub Actions can push commits:
 
 2. Add the following **Repository Secrets**:
    - `GITHUB_TOKEN` - This is automatically provided by GitHub Actions (no need to add)
-   - `GITHUB_ORG_NAME` - Your organization name (e.g., `WeMoAD-umich`)
+   - `ORG_NAME` - Your organization name (e.g., `WeMoAD-umich`)
      - Click "New repository secret"
-     - Name: `GITHUB_ORG_NAME`
+     - Name: `ORG_NAME`
      - Value: `WeMoAD-umich`
      - Click "Add secret"
 
@@ -103,7 +103,7 @@ The workflow runs automatically every night at 11 PM Eastern Time. If today matc
   - Check "Allow GitHub Actions to create and approve pull requests"
 
 ### Workflow failing
-- Check if `GITHUB_ORG_NAME` secret is set correctly
+- Check if `ORG_NAME` secret is set correctly
 - Verify the `report-publish` branch exists
 - Check workflow logs in the **Actions** tab for specific errors
 
@@ -119,7 +119,7 @@ To test report generation locally:
 ```bash
 # Set environment variables
 export GITHUB_TOKEN="your-token"
-export GITHUB_ORG_NAME="WeMoAD-umich"
+export ORG_NAME="WeMoAD-umich"
 export GITHUB_ITERATION_START="2025-11-10"
 export GITHUB_ITERATION_END="2025-11-17T23:59:59Z"
 export GITHUB_ITERATION_NAME="Iteration 67"
@@ -136,7 +136,7 @@ Visit http://localhost:8000 to view and generate reports.
 ## Next Steps
 
 1. ✅ Enable GitHub Pages (Step 1)
-2. ✅ Add repository secret for GITHUB_ORG_NAME (Step 3)
+2. ✅ Add repository secret for ORG_NAME (Step 3)
 3. ✅ Update iteration schedule (Step 4)
 4. ✅ Run workflow manually to test (Step 5)
 5. ✅ Verify deployment (Step 6)
