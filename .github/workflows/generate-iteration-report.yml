@@ -2,9 +2,9 @@ name: Generate Iteration Report
 
 on:
   # Run daily at 11:00 PM Eastern time to check if it's the scheduled date
+  # Note: Will run at 10 PM during EST (winter) and 11 PM during EDT (summer)
   schedule:
-    - cron: '0 3 * * *'  # 11 PM EDT (summer)
-    - cron: '0 4 * * *'  # 11 PM EST (winter)
+    - cron: '0 3 * * *'  # 3:00 AM UTC = 11 PM EDT / 10 PM EST
   # Allow manual trigger
   workflow_dispatch:
 
