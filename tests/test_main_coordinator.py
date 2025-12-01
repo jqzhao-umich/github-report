@@ -1,5 +1,13 @@
 """
 Tests for the main coordinator agent
+
+NOTE: Some tests in this file may fail when run as part of full test suite due to 
+test pollution from shared MCP server state (particularly from test_server.py tests).
+All tests pass when run in isolation. The affected tests expect AgentCommunicationError
+but may see ValidationError when polluted mock state returns wrong types.
+
+To run tests in isolation:
+    pytest tests/test_main_coordinator.py -v
 """
 
 import pytest

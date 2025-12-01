@@ -240,29 +240,23 @@ async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """Handle tool calls with comprehensive error handling"""
-    try:
-        print(f"Starting tool execution: {name} with arguments: {arguments}")
+    print(f"Starting tool execution: {name} with arguments: {arguments}")
+    
+    # Check for unknown tools first
+    valid_tools = ["get-iteration-info", "get-github-data"]
+    if name not in valid_tools:
+        raise ValueError(f"Unknown tool: {name}")
+    
+    if not arguments:
+        raise ValueError("Missing arguments")
+    
+    print(f"Arguments validated for tool: {name}")
+    
+    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+    if not GITHUB_TOKEN:
+        raise GitHubAuthError("GitHub token not set in environment. Please set GITHUB_TOKEN environment variable.")
         
-        # Check for unknown tools first
-        valid_tools = ["get-iteration-info", "get-github-data"]
-        if name not in valid_tools:
-            raise ValueError(f"Unknown tool: {name}")
-        
-        if not arguments:
-            raise ValueError("Missing arguments")
-        
-        print(f"Arguments validated for tool: {name}")
-        
-        GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-        if not GITHUB_TOKEN:
-            raise GitHubAuthError("GitHub token not set in environment. Please set GITHUB_TOKEN environment variable.")
-            
-        print(f"Environment validated for tool: {name}")
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error validating tool execution: {error_details}")
-        raise GitHubError(f"Failed to validate tool execution: {str(e)}")
+    print(f"Environment validated for tool: {name}")
 
     if name == "get-iteration-info":
         try:

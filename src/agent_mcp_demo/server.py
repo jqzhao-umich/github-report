@@ -405,12 +405,15 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
                                 iterations = field['configuration']['iterations']
                                 print(f"Found {len(iterations)} iterations")
                                 if iterations:
-                                    # Find the current iteration based on today's date
+                                    # Find the current or previous iteration based on today's date in Eastern Time
                                     from datetime import datetime, timedelta
-                                    today = datetime.now().date()
-                                    current_iteration = None
+                                    from zoneinfo import ZoneInfo
+                                    today = datetime.now(ZoneInfo("America/New_York")).date()
+                                    target_iteration = None
                                     
-                                    for iteration in iterations:
+                                    # First, find which iteration we're in
+                                    current_iteration_index = None
+                                    for idx, iteration in enumerate(iterations):
                                         start_date = iteration.get('startDate')
                                         duration = iteration.get('duration')
                                         
@@ -420,12 +423,45 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
                                             
                                             # Check if today falls within this iteration
                                             if start_dt <= today <= end_dt:
-                                                current_iteration = iteration
-                                                print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                current_iteration_index = idx
+                                                print(f"Today is in: {iteration.get('title')} ({start_date} to {end_dt})")
+                                                
+                                                # If today is the first day of iteration, use previous iteration
+                                                if today == start_dt:
+                                                    if idx > 0:
+                                                        # Previous iteration is in the list
+                                                        target_iteration = iterations[idx - 1]
+                                                        prev_start_dt = datetime.fromisoformat(target_iteration.get('startDate').replace('Z', '+00:00')).date()
+                                                        prev_end_dt = prev_start_dt + timedelta(days=target_iteration.get('duration'))
+                                                        print(f"First day of iteration - using previous iteration: {target_iteration.get('title')} ({target_iteration.get('startDate')} to {prev_end_dt})")
+                                                    else:
+                                                        # Previous iteration not in list, calculate it
+                                                        prev_end_dt = start_dt - timedelta(days=1)
+                                                        prev_start_dt = prev_end_dt - timedelta(days=duration - 1)
+                                                        
+                                                        # Extract iteration number and create previous iteration info
+                                                        import re
+                                                        match = re.search(r'(\d+)', iteration.get('title', ''))
+                                                        if match:
+                                                            current_num = int(match.group(1))
+                                                            prev_title = iteration.get('title', 'Iteration').replace(str(current_num), str(current_num - 1))
+                                                        else:
+                                                            prev_title = 'Previous Iteration'
+                                                        
+                                                        target_iteration = {
+                                                            'title': prev_title,
+                                                            'startDate': prev_start_dt.isoformat(),
+                                                            'duration': duration
+                                                        }
+                                                        print(f"First day of iteration - calculated previous iteration: {prev_title} ({prev_start_dt} to {prev_end_dt})")
+                                                else:
+                                                    # Otherwise use current iteration
+                                                    target_iteration = iteration
+                                                    print(f"Using current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
                                                 break
                                     
                                     # If no current iteration found, use the most recent past iteration
-                                    if not current_iteration:
+                                    if not target_iteration:
                                         for iteration in reversed(iterations):
                                             start_date = iteration.get('startDate')
                                             duration = iteration.get('duration')
@@ -436,19 +472,19 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
                                                 
                                                 # Use the most recent iteration that has ended
                                                 if end_dt < today:
-                                                    current_iteration = iteration
+                                                    target_iteration = iteration
                                                     print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
                                                     break
                                     
                                     # If still no iteration found, use the first one (fallback)
-                                    if not current_iteration and iterations:
-                                        current_iteration = iterations[0]
-                                        print(f"Using fallback iteration: {current_iteration.get('title')}")
+                                    if not target_iteration and iterations:
+                                        target_iteration = iterations[0]
+                                        print(f"Using fallback iteration: {target_iteration.get('title')}")
                                     
-                                    if current_iteration:
+                                    if target_iteration:
                                         # Calculate end date from start date and duration
-                                        start_date = current_iteration.get('startDate')
-                                        duration = current_iteration.get('duration')
+                                        start_date = target_iteration.get('startDate')
+                                        duration = target_iteration.get('duration')
                                         
                                         if start_date and duration:
                                             start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
@@ -458,7 +494,7 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
                                             end_date = None
                                         
                                         return {
-                                            'name': current_iteration.get('title', 'Current Sprint'),
+                                            'name': target_iteration.get('title', 'Current Sprint'),
                                             'start_date': start_date,
                                             'end_date': end_date,
                                             'path': f"{org_name}/{project_name}"

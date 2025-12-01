@@ -93,7 +93,8 @@ class TestIterationInfo:
         }
         
         # Mock fields response with current iteration
-        today = datetime.now().date()
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/New_York")).date()
         start_date = (today - timedelta(days=5)).isoformat()
         duration = 14
         

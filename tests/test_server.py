@@ -55,7 +55,7 @@ class TestRootEndpoint:
     def test_root_endpoint_contains_refresh_button(self):
         """Test that root endpoint contains refresh button"""
         response = client.get("/")
-        assert '<button class="refresh-btn"' in response.text
+        assert '<button class="action-btn primary-btn"' in response.text
         assert 'loadReport()' in response.text
     
     def test_root_endpoint_contains_report_container(self):

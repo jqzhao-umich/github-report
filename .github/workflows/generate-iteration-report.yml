@@ -89,11 +89,11 @@ jobs:
                   with open(schedule_file) as f:
                       config = yaml.safe_load(f)
                   
-                  scheduled_date_str = config.get('next_iteration_end_date')
+                  scheduled_date_str = config.get('next_iteration_start_date')
                   if scheduled_date_str:
                       from datetime import date
                       scheduled_date = date.fromisoformat(scheduled_date_str)
-                      print(f"Scheduled report date: {scheduled_date}")
+                      print(f"Scheduled report date (first day of iteration): {scheduled_date}")
                   else:
                       print("No scheduled date in config")
                       scheduled_date = None
@@ -103,16 +103,16 @@ jobs:
               iteration_name = None
               
               if scheduled_date and today == scheduled_date:
-                  print("✓ Today matches the scheduled date!")
+                  print("✓ Today is the first day of a new iteration!")
                   should_generate = True
-                  # Read iteration name from config
+                  # Read iteration name from config (this will be the previous iteration)
                   if schedule_file.exists():
                       with open(schedule_file) as f:
                           config = yaml.safe_load(f)
-                      iteration_name = config.get('next_iteration_name', 'Unknown')
+                      iteration_name = config.get('previous_iteration_name', 'Unknown')
               else:
-                  print("Today does not match the scheduled date")
-                  print("Checking GitHub Projects for current iteration end date...")
+                  print("Today is not the first day of a new iteration")
+                  print("Checking GitHub Projects for current iteration start date...")
                   
                   # Fallback: Check GitHub Projects if no schedule or date doesn't match
                   from agent_mcp_demo.server import get_current_iteration_info
@@ -124,16 +124,17 @@ jobs:
                       iteration_info = get_current_iteration_info(token, org_name, "Michigan App Team Task Board")
                       
                       if iteration_info:
-                          end_date_str = iteration_info.get('end_date', '')
-                          if end_date_str:
-                              end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-                              end_date_eastern = end_date.astimezone(eastern).date()
+                          start_date_str = iteration_info.get('start_date', '')
+                          if start_date_str:
+                              start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+                              start_date_eastern = start_date.astimezone(eastern).date()
                               
-                              print(f"Current iteration end date from GitHub: {end_date_eastern}")
+                              print(f"Current iteration start date from GitHub: {start_date_eastern}")
                               
-                              if today == end_date_eastern:
-                                  print("✓ Today is the iteration end date from GitHub Projects!")
+                              if today == start_date_eastern:
+                                  print("✓ Today is the first day of iteration from GitHub Projects!")
                                   should_generate = True
+                                  # The function will return the previous iteration on first day
                                   iteration_name = iteration_info.get('name', 'Unknown')
               
               # Write output

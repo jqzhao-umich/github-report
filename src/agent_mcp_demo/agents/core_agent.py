@@ -54,8 +54,10 @@ async def handle_read_resource(uri: AnyUrl) -> str:
     name = uri.path
     if name is not None:
         name = name.lstrip("/")
+        if name not in notes:
+            raise ValueError(f"Note not found: {name}")
         return notes[name]
-    raise ValueError(f"Note not found: {name}")
+    raise ValueError("Note name is required")
 
 @server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
@@ -137,6 +139,10 @@ async def handle_call_tool(
     Handle tool execution requests.
     Tools can modify server state and notify clients of changes.
     """
+    # Check tool name first before validating arguments
+    if name not in ["add-note"]:
+        raise ValueError(f"Unknown tool: {name}")
+    
     if not arguments:
         raise ValueError("Missing arguments")
 
