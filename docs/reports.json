@@ -9,15 +9,6 @@
     "end_date": "2025-11-17T00:00:00"
   },
   {
-    "date": "2025-11-19T21:24:33.130483-05:00",
-    "title": "Report for WeMoAD-umich - Iteration 68",
-    "path": "2025-11-19_09-24-PM_WeMoAD-umich_iteration-68.html",
-    "org_name": "WeMoAD-umich",
-    "iteration_name": "Iteration 68",
-    "start_date": "2025-11-17",
-    "end_date": "2025-12-01T00:00:00"
-  },
-  {
     "date": "2025-11-30T23:09:41.439684-05:00",
     "title": "Report for WeMoAD-umich - Iteration 69",
     "path": "2025-11-30_11-09-PM_WeMoAD-umich_iteration-69.html",
@@ -25,5 +16,14 @@
     "iteration_name": "Iteration 69",
     "start_date": "2025-12-01",
     "end_date": "2025-12-15T00:00:00"
+  },
+  {
+    "date": "2025-12-01T21:29:44.784776-05:00",
+    "title": "Report for WeMoAD-umich - Iteration 68",
+    "path": "2025-12-01_09-29-PM_WeMoAD-umich_iteration-68.html",
+    "org_name": "WeMoAD-umich",
+    "iteration_name": "Iteration 68",
+    "start_date": "2025-11-17",
+    "end_date": "2025-12-01T00:00:00"
   }
 ]
