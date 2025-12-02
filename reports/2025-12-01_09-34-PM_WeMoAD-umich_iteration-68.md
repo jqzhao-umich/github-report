@@ -1,5 +1,5 @@
 GitHub Organization: WeMoAD-umich
-Report started on: 2025-12-02 02:27:07 AM EST
+Report started on: 2025-12-02 02:31:39 AM EST
 
 ============================================================
 CURRENT ITERATION INFORMATION
@@ -104,5 +104,5 @@ Filtered by iteration: 2025-11-17 to 2025-12-01
 - [michigan-feedback-service] #34 Implement people info by uniqname (Open)
 
 ============================================================
-Report completed on: 2025-12-02 02:29:44 AM EST
-Generation time: 157.41 seconds
+Report completed on: 2025-12-02 02:34:17 AM EST
+Generation time: 158.74 seconds
