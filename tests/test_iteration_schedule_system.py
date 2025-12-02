@@ -36,15 +36,18 @@ def schedule_file_path(temp_schedule_dir):
 
 def test_schedule_file_creation(schedule_file_path, sample_iteration_info):
     """Test creating a schedule file with iteration info."""
-    # Parse end date
+    # Parse end date and calculate next iteration start
     end_date = datetime.fromisoformat(sample_iteration_info['end_date'].replace('Z', '+00:00'))
     eastern = ZoneInfo("America/New_York")
     end_date_eastern = end_date.astimezone(eastern)
     
+    from datetime import timedelta
+    next_iteration_start = end_date_eastern.date() + timedelta(days=1)
+    
     # Create schedule data
     schedule_data = {
-        'next_iteration_end_date': end_date_eastern.date().isoformat(),
-        'next_iteration_name': sample_iteration_info['name'],
+        'next_iteration_start_date': next_iteration_start.isoformat(),
+        'previous_iteration_name': sample_iteration_info['name'],
         'last_updated': datetime.now(eastern).isoformat()
     }
     
@@ -58,8 +61,8 @@ def test_schedule_file_creation(schedule_file_path, sample_iteration_info):
     with open(schedule_file_path) as f:
         loaded_data = yaml.safe_load(f)
     
-    assert loaded_data['next_iteration_end_date'] == '2025-11-20'
-    assert loaded_data['next_iteration_name'] == 'Sprint 42'
+    assert loaded_data['next_iteration_start_date'] == '2025-11-21'
+    assert loaded_data['previous_iteration_name'] == 'Sprint 42'
     assert 'last_updated' in loaded_data
 
 
@@ -67,8 +70,8 @@ def test_schedule_file_reading(schedule_file_path):
     """Test reading schedule file and checking date."""
     # Create a schedule file
     schedule_data = {
-        'next_iteration_end_date': '2025-11-20',
-        'next_iteration_name': 'Sprint 42',
+        'next_iteration_start_date': '2025-11-20',
+        'previous_iteration_name': 'Sprint 42',
         'last_updated': '2025-11-15T10:00:00-05:00'
     }
     
@@ -79,9 +82,9 @@ def test_schedule_file_reading(schedule_file_path):
     with open(schedule_file_path) as f:
         loaded_data = yaml.safe_load(f)
     
-    scheduled_date = date.fromisoformat(loaded_data['next_iteration_end_date'])
+    scheduled_date = date.fromisoformat(loaded_data['next_iteration_start_date'])
     assert scheduled_date == date(2025, 11, 20)
-    assert loaded_data['next_iteration_name'] == 'Sprint 42'
+    assert loaded_data['previous_iteration_name'] == 'Sprint 42'
 
 
 def test_schedule_date_matches_today(schedule_file_path):
@@ -90,8 +93,8 @@ def test_schedule_date_matches_today(schedule_file_path):
     
     # Create schedule with today's date
     schedule_data = {
-        'next_iteration_end_date': today.isoformat(),
-        'next_iteration_name': 'Current Sprint',
+        'next_iteration_start_date': today.isoformat(),
+        'previous_iteration_name': 'Current Sprint',
         'last_updated': datetime.now().isoformat()
     }
     
@@ -102,7 +105,7 @@ def test_schedule_date_matches_today(schedule_file_path):
     with open(schedule_file_path) as f:
         config = yaml.safe_load(f)
     
-    scheduled_date = date.fromisoformat(config['next_iteration_end_date'])
+    scheduled_date = date.fromisoformat(config['next_iteration_start_date'])
     should_generate = (today == scheduled_date)
     
     assert should_generate is True
@@ -112,8 +115,8 @@ def test_schedule_date_not_today(schedule_file_path):
     """Test checking if scheduled date is not today."""
     # Create schedule with future date
     schedule_data = {
-        'next_iteration_end_date': '2025-12-31',
-        'next_iteration_name': 'Future Sprint',
+        'next_iteration_start_date': '2025-12-31',
+        'previous_iteration_name': 'Future Sprint',
         'last_updated': datetime.now().isoformat()
     }
     
@@ -124,7 +127,7 @@ def test_schedule_date_not_today(schedule_file_path):
     with open(schedule_file_path) as f:
         config = yaml.safe_load(f)
     
-    scheduled_date = date.fromisoformat(config['next_iteration_end_date'])
+    scheduled_date = date.fromisoformat(config['next_iteration_start_date'])
     today = date.today()
     should_generate = (today == scheduled_date)
     
@@ -171,8 +174,8 @@ def test_schedule_file_missing_fields(schedule_file_path):
     with open(schedule_file_path) as f:
         config = yaml.safe_load(f)
     
-    scheduled_date_str = config.get('next_iteration_end_date')
-    iteration_name = config.get('next_iteration_name')
+    scheduled_date_str = config.get('next_iteration_start_date')
+    iteration_name = config.get('previous_iteration_name')
     
     assert scheduled_date_str is None
     assert iteration_name is None
@@ -182,8 +185,8 @@ def test_schedule_file_null_values(schedule_file_path):
     """Test handling schedule file with null values."""
     # Create schedule with null values
     schedule_data = {
-        'next_iteration_end_date': None,
-        'next_iteration_name': None,
+        'next_iteration_start_date': None,
+        'previous_iteration_name': None,
         'last_updated': None
     }
     
@@ -194,11 +197,11 @@ def test_schedule_file_null_values(schedule_file_path):
     with open(schedule_file_path) as f:
         config = yaml.safe_load(f)
     
-    assert config['next_iteration_end_date'] is None
-    assert config['next_iteration_name'] is None
+    assert config['next_iteration_start_date'] is None
+    assert config['previous_iteration_name'] is None
     
     # Should trigger fallback
-    should_use_fallback = config.get('next_iteration_end_date') is None
+    should_use_fallback = config.get('next_iteration_start_date') is None
     assert should_use_fallback is True
 
 
