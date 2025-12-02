@@ -30,7 +30,6 @@ ENV/
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
@@ -73,6 +72,5 @@ Thumbs.db
 server.log
 sample_data.json
 run/
-agent_mcp_demo/  # Old structure, replaced by src/agent_mcp_demo
 .vscode/*
 !.vscode/mcp.json
