@@ -76,8 +76,9 @@ jobs:
               # Get current date in Eastern Time
               eastern = ZoneInfo("America/New_York")
               today = datetime.now(eastern).date()
+              tz_name = "EDT" if datetime.now(eastern).dst() else "EST"
               
-              print(f"Today (Eastern Time): {today} EST")
+              print(f"Today (Eastern Time): {today} {tz_name}")
               print(f"Current timezone: {datetime.now(eastern).tzname()}")
               
               # Read the iteration schedule file
@@ -94,7 +95,7 @@ jobs:
                   if scheduled_date_str:
                       from datetime import date
                       scheduled_date = date.fromisoformat(scheduled_date_str)
-                      print(f"Scheduled report date (first day of iteration): {scheduled_date} EST")
+                      print(f"Scheduled report date (first day of iteration): {scheduled_date} {tz_name}")
                   else:
                       print("No scheduled date in config")
                       scheduled_date = None
@@ -104,7 +105,7 @@ jobs:
               iteration_name = None
               
               if scheduled_date and today == scheduled_date:
-                  print("✓ Today is the first day of a new iteration (EST)!")
+                  print("✓ Today is the first day of a new iteration (EST/EDT)!")
                   should_generate = True
                   # Read iteration name from config (this will be the previous iteration)
                   if schedule_file.exists():
@@ -112,7 +113,7 @@ jobs:
                           config = yaml.safe_load(f)
                       iteration_name = config.get('previous_iteration_name', 'Unknown')
               else:
-                  print("Today is not the first day of a new iteration (EST)")
+                  print("Today is not the first day of a new iteration (EST/EDT)")
                   print("Checking GitHub Projects for current iteration start date...")
                   
                   # Fallback: Check GitHub Projects if no schedule or date doesn't match
@@ -130,10 +131,10 @@ jobs:
                               start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
                               start_date_eastern = start_date.astimezone(eastern).date()
                               
-                              print(f"Current iteration start date from GitHub: {start_date_eastern} EST")
+                              print(f"Current iteration start date from GitHub: {start_date_eastern} {tz_name}")
                               
                               if today == start_date_eastern:
-                                  print("✓ Today is the first day of iteration from GitHub Projects (EST)!")
+                                  print("✓ Today is the first day of iteration from GitHub Projects (EST/EDT)!")
                                   should_generate = True
                                   # The function will return the previous iteration on first day
                                   iteration_name = iteration_info.get('name', 'Unknown')
@@ -255,4 +256,4 @@ jobs:
           echo "✅ Successfully generated and published report for ${{ steps.check_date.outputs.iteration_name }}"
           echo "📄 Files committed to repository"
           echo "🌐 GitHub Pages will update automatically"
-          echo "ℹ️  All dates are in EST (Eastern Standard Time)"
+          echo "ℹ️  All dates are in Eastern Time (EST in winter, EDT in summer)"

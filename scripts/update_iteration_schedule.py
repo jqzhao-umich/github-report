@@ -162,6 +162,9 @@ def main():
         start_date_eastern = start_date.astimezone(eastern)
         end_date_eastern = end_date.astimezone(eastern)
         
+        # Get current timezone abbreviation (EST or EDT)
+        tz_name = "EDT" if datetime.now(eastern).dst() else "EST"
+        
         iteration_name = iteration_info.get('name', 'Unknown')
         
         # Calculate next iteration start date (day after current iteration ends)
@@ -170,19 +173,19 @@ def main():
         
         print(f"\n📊 Current Iteration Information:")
         print(f"   Name: {iteration_name}")
-        print(f"   Start Date: {start_date_eastern.date()} EST")
-        print(f"   End Date: {end_date_eastern.date()} EST")
+        print(f"   Start Date: {start_date_eastern.date()} {tz_name}")
+        print(f"   End Date: {end_date_eastern.date()} {tz_name}")
         print(f"\n📅 Next Iteration:")
-        print(f"   Start Date: {next_iteration_start} EST")
-        print(f"   (Report will be generated for {iteration_name} on {next_iteration_start} EST)")
+        print(f"   Start Date: {next_iteration_start} {tz_name}")
+        print(f"   (Report will be generated for {iteration_name} on {next_iteration_start} {tz_name})")
         
         # Create schedule data
-        # Note: All dates in this file are in EST (Eastern Standard Time)
+        # Note: All dates in this file are in Eastern Time (EST/EDT depending on season)
         schedule_data = {
             'next_iteration_start_date': next_iteration_start.isoformat(),
             'previous_iteration_name': iteration_name,
             'last_updated': datetime.now(eastern).isoformat(),
-            '_timezone_note': 'All dates are in EST (Eastern Standard Time)'
+            '_timezone_note': f'All dates are in {tz_name} (Eastern Time)'
         }
         
         # Write to schedule file with timezone comment header
@@ -190,15 +193,15 @@ def main():
         schedule_file.parent.mkdir(parents=True, exist_ok=True)
         
         with open(schedule_file, 'w') as f:
-            f.write("# Iteration Schedule - All dates in EST (Eastern Standard Time)\n")
+            f.write(f"# Iteration Schedule - All dates in {tz_name} (Eastern Time)\n")
             yaml.dump(schedule_data, f, default_flow_style=False, sort_keys=False)
         
         print(f"\n✅ Schedule file updated: {schedule_file}")
-        print(f"   Next report will be generated on: {next_iteration_start} EST")
+        print(f"   Next report will be generated on: {next_iteration_start} {tz_name}")
         print(f"   Report will cover: {iteration_name}")
         print(f"\n💡 Commit this file to activate the schedule:")
         print(f"   git add {schedule_file}")
-        print(f"   git commit -m 'Update iteration schedule: report on {next_iteration_start} EST'")
+        print(f"   git commit -m 'Update iteration schedule: report on {next_iteration_start} {tz_name}'")
         print(f"   git push")
         
     except Exception as e:
