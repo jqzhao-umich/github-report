@@ -357,9 +357,9 @@ async def github_report_api():
         report.append("=" * 60)
         report.append(f"Iteration Name: {iteration_info.get('name', 'Unknown')}")
         if iteration_info.get('start_date'):
-            report.append(f"Start Date: {iteration_info['start_date']}")
+            report.append(f"Start Date: {iteration_info['start_date']} (EST)")
         if iteration_info.get('end_date'):
-            report.append(f"End Date: {iteration_info['end_date']}")
+            report.append(f"End Date: {iteration_info['end_date']} (EST)")
         if iteration_info.get('path'):
             report.append(f"Iteration Path: {iteration_info['path']}")
         report.append("=" * 60)

@@ -170,32 +170,35 @@ def main():
         
         print(f"\n📊 Current Iteration Information:")
         print(f"   Name: {iteration_name}")
-        print(f"   Start Date: {start_date_eastern.date()} (Eastern Time)")
-        print(f"   End Date: {end_date_eastern.date()} (Eastern Time)")
+        print(f"   Start Date: {start_date_eastern.date()} EST")
+        print(f"   End Date: {end_date_eastern.date()} EST")
         print(f"\n📅 Next Iteration:")
-        print(f"   Start Date: {next_iteration_start}")
-        print(f"   (Report will be generated for {iteration_name} on {next_iteration_start})")
+        print(f"   Start Date: {next_iteration_start} EST")
+        print(f"   (Report will be generated for {iteration_name} on {next_iteration_start} EST)")
         
         # Create schedule data
+        # Note: All dates in this file are in EST (Eastern Standard Time)
         schedule_data = {
             'next_iteration_start_date': next_iteration_start.isoformat(),
             'previous_iteration_name': iteration_name,
-            'last_updated': datetime.now(eastern).isoformat()
+            'last_updated': datetime.now(eastern).isoformat(),
+            '_timezone_note': 'All dates are in EST (Eastern Standard Time)'
         }
         
-        # Write to schedule file
+        # Write to schedule file with timezone comment header
         schedule_file = Path(".github/iteration-schedule.yml")
         schedule_file.parent.mkdir(parents=True, exist_ok=True)
         
         with open(schedule_file, 'w') as f:
+            f.write("# Iteration Schedule - All dates in EST (Eastern Standard Time)\n")
             yaml.dump(schedule_data, f, default_flow_style=False, sort_keys=False)
         
         print(f"\n✅ Schedule file updated: {schedule_file}")
-        print(f"   Next report will be generated on: {next_iteration_start}")
+        print(f"   Next report will be generated on: {next_iteration_start} EST")
         print(f"   Report will cover: {iteration_name}")
         print(f"\n💡 Commit this file to activate the schedule:")
         print(f"   git add {schedule_file}")
-        print(f"   git commit -m 'Update iteration schedule: report on {next_iteration_start}'")
+        print(f"   git commit -m 'Update iteration schedule: report on {next_iteration_start} EST'")
         print(f"   git push")
         
     except Exception as e:

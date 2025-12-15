@@ -266,8 +266,8 @@ class ReportPublisher:
         <h2>Report Metadata</h2>
         <p><strong>Organization:</strong> {metadata['org_name']}</p>
         <p><strong>Iteration:</strong> {metadata['iteration_name'] or 'N/A'}</p>
-        <p><strong>Period:</strong> {metadata['start_date'] or 'N/A'} to {metadata['end_date'] or 'N/A'}</p>
-        <p><strong>Generated:</strong> {local_time.strftime('%Y-%m-%d %H:%M:%S %Z')}</p>
+        <p><strong>Period:</strong> {metadata['start_date'] or 'N/A'} to {metadata['end_date'] or 'N/A'} (EST)</p>
+        <p><strong>Generated:</strong> {local_time.strftime('%Y-%m-%d %H:%M:%S %Z')} (Eastern Time)</p>
     </div>
     <div class="content">
         {content}
