@@ -96,7 +96,19 @@ async def handle_call_tool(
         except (LookupError, AttributeError) as e:
             raise AgentCommunicationError(f"Failed to communicate with web-interface-agent: {e}")
         
-        return [types.TextContent(type="text", text=report[0].text if report else "No report generated")]
+        # Safely extract report text, ensuring it's a string
+        try:
+            report_text = "No report generated"
+            if report and len(report) > 0:
+                report_content = report[0].text if hasattr(report[0], 'text') else str(report[0])
+                # Ensure it's actually a string (not a Mock or other object)
+                if isinstance(report_content, str):
+                    report_text = report_content
+                else:
+                    report_text = str(report_content)
+            return [types.TextContent(type="text", text=report_text)]
+        except (AttributeError, TypeError, ValueError) as e:
+            raise AgentCommunicationError(f"Failed to extract report content: {e}")
 
 async def main():
     from mcp.server.stdio import stdio_server

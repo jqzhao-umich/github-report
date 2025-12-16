@@ -55,6 +55,8 @@ This is a test report."""
         assert "2025-01-01" in html_content
         assert "2025-01-15" in html_content
         assert "Test Report" in html_content
+        # Check for timezone abbreviation (EST or EDT)
+        assert "EST" in html_content or "EDT" in html_content
 
 @pytest.mark.asyncio
 async def test_multiple_reports(publisher):
@@ -127,6 +129,8 @@ async def test_overwrite_same_iteration(publisher, temp_base_dir):
         content = f.read()
         assert "Second Report" in content
         assert "updated version" in content
+        # Check for timezone abbreviation (EST or EDT)
+        assert "EST" in content or "EDT" in content
     
     # If filenames are different (different timestamps), verify old files were removed
     if first_html != second_html:

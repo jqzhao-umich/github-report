@@ -41,18 +41,23 @@ def test_schedule_file_creation(schedule_file_path, sample_iteration_info):
     eastern = ZoneInfo("America/New_York")
     end_date_eastern = end_date.astimezone(eastern)
     
+    # Get timezone abbreviation (EST or EDT)
+    tz_name = "EDT" if datetime.now(eastern).dst() else "EST"
+    
     from datetime import timedelta
     next_iteration_start = end_date_eastern.date() + timedelta(days=1)
     
-    # Create schedule data
+    # Create schedule data (like the script does)
     schedule_data = {
         'next_iteration_start_date': next_iteration_start.isoformat(),
         'previous_iteration_name': sample_iteration_info['name'],
-        'last_updated': datetime.now(eastern).isoformat()
+        'last_updated': datetime.now(eastern).isoformat(),
+        '_timezone_note': f'All dates are in {tz_name} (Eastern Time)'
     }
     
-    # Write to file
+    # Write to file with header comment (like the script does)
     with open(schedule_file_path, 'w') as f:
+        f.write(f"# Iteration Schedule - All dates in {tz_name} (Eastern Time)\n")
         yaml.dump(schedule_data, f, default_flow_style=False, sort_keys=False)
     
     # Verify file exists and contains correct data
@@ -64,6 +69,8 @@ def test_schedule_file_creation(schedule_file_path, sample_iteration_info):
     assert loaded_data['next_iteration_start_date'] == '2025-11-21'
     assert loaded_data['previous_iteration_name'] == 'Sprint 42'
     assert 'last_updated' in loaded_data
+    assert '_timezone_note' in loaded_data
+    assert f'{tz_name}' in loaded_data['_timezone_note']
 
 
 def test_schedule_file_reading(schedule_file_path):
