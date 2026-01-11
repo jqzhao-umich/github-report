@@ -34,5 +34,14 @@
     "iteration_name": "Iteration 70",
     "start_date": "2025-12-15",
     "end_date": "2025-12-29T00:00:00"
+  },
+  {
+    "date": "2026-01-11T00:26:38.913484-05:00",
+    "title": "Report for WeMoAD-umich - Iteration 71",
+    "path": "2026-01-11_12-26-AM_WeMoAD-umich_iteration-71.html",
+    "org_name": "WeMoAD-umich",
+    "iteration_name": "Iteration 71",
+    "start_date": "2025-12-29",
+    "end_date": "2026-01-12T00:00:00"
   }
 ]
