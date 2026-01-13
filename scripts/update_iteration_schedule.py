@@ -101,24 +101,28 @@ def get_actual_current_iteration(token, org_name, project_name):
     
     iterations = iteration_field.get("configuration", {}).get("iterations", [])
     
-    # Find current iteration based on today's date
-    eastern = ZoneInfo("America/New_York")
-    today = datetime.now(eastern).date()
+    # Find current iteration based on today's date (use UTC to match GitHub's iteration dates)
+    from datetime import timedelta
+    today_utc = datetime.now(ZoneInfo("UTC")).date()
     
     for iteration in iterations:
         start_date_str = iteration.get("startDate")
         duration = iteration.get("duration", 14)
         
         if start_date_str:
-            start_dt = datetime.fromisoformat(start_date_str).replace(tzinfo=eastern).date()
-            from datetime import timedelta
+            start_dt = datetime.fromisoformat(start_date_str).date()
             end_dt = start_dt + timedelta(days=duration - 1)
             
-            if start_dt <= today <= end_dt:
+            if start_dt <= today_utc <= end_dt:
+                # Convert dates to Eastern Time for display
+                eastern = ZoneInfo("America/New_York")
+                start_dt_eastern = datetime.fromisoformat(start_date_str).astimezone(eastern)
+                end_dt_iso = (start_dt + timedelta(days=duration - 1)).isoformat()
+                end_dt_eastern = datetime.fromisoformat(end_dt_iso).astimezone(eastern)
                 return {
                     'name': iteration.get('title'),
-                    'start_date': start_dt.isoformat(),
-                    'end_date': end_dt.isoformat(),
+                    'start_date': start_dt_eastern.isoformat(),
+                    'end_date': end_dt_eastern.isoformat(),
                     'path': f"{org_name}/{project_name}"
                 }
     

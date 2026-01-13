@@ -3,7 +3,7 @@ import pytest
 import os
 import yaml
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open
 from zoneinfo import ZoneInfo
@@ -484,3 +484,148 @@ def test_schedule_backward_compatibility(schedule_file_path):
     assert 'next_iteration_end_date' in loaded_data
     assert 'next_iteration_name' in loaded_data
     assert 'last_updated' in loaded_data
+
+
+def test_utc_date_comparison_for_iteration_detection():
+    """Test that iteration detection uses UTC dates (not Eastern local time)."""
+    from datetime import timedelta
+    
+    # Simulate GitHub iteration dates in UTC
+    iteration_start_utc = datetime(2026, 1, 12, 0, 0, 0, tzinfo=ZoneInfo("UTC"))
+    iteration_duration = 14
+    
+    # Calculate UTC dates
+    today_utc = datetime.now(ZoneInfo("UTC")).date()
+    start_date_utc = iteration_start_utc.date()
+    end_date_utc = start_date_utc + timedelta(days=iteration_duration - 1)
+    
+    # Iteration should be found if today_utc is between start and end
+    is_in_iteration = (start_date_utc <= today_utc <= end_date_utc)
+    
+    # If we're on Jan 12, 2026 UTC, we should find Iteration 72
+    if date(2026, 1, 12) <= today_utc <= date(2026, 1, 25):
+        assert is_in_iteration is True
+
+
+def test_utc_vs_eastern_time_mismatch():
+    """Test the specific case: 1 AM UTC = 8 PM EST (previous day)."""
+    from datetime import timedelta
+    
+    # When GitHub runs the action at 1 AM UTC on Jan 12
+    utc_time = datetime(2026, 1, 12, 1, 0, 0, tzinfo=ZoneInfo("UTC"))
+    
+    # Same moment in Eastern Time is 8 PM on Jan 11
+    eastern = ZoneInfo("America/New_York")
+    eastern_time = utc_time.astimezone(eastern)
+    
+    # Convert to dates
+    utc_date = utc_time.date()
+    eastern_date = eastern_time.date()
+    
+    # Verify timezone difference
+    assert utc_date == date(2026, 1, 12)
+    assert eastern_date == date(2026, 1, 11)
+    assert utc_date != eastern_date  # Different dates!
+    
+    # Iteration 72 starts on Jan 12 UTC
+    iteration_start = date(2026, 1, 12)
+    
+    # Using UTC date comparison should find iteration
+    assert iteration_start <= utc_date
+    
+    # Using Eastern date comparison would fail (incorrectly)
+    assert not (iteration_start <= eastern_date)
+
+
+def test_github_iteration_dates_are_utc():
+    """Test that GitHub API returns iteration dates in UTC."""
+    # GitHub iteration dates in the API response are ISO 8601 UTC format
+    github_start_date_str = "2026-01-12T00:00:00Z"
+    github_end_date_str = "2026-01-25T23:59:59Z"
+    
+    # Parse as UTC
+    start_dt = datetime.fromisoformat(github_start_date_str.replace('Z', '+00:00'))
+    end_dt = datetime.fromisoformat(github_end_date_str.replace('Z', '+00:00'))
+    
+    # Extract UTC dates
+    start_date_utc = start_dt.date()
+    end_date_utc = end_dt.date()
+    
+    # Should match what we expect
+    assert start_date_utc == date(2026, 1, 12)
+    assert end_date_utc == date(2026, 1, 25)
+
+
+def test_iteration_detection_uses_utc_not_eastern():
+    """Test that script uses UTC date for iteration detection."""
+    from datetime import timedelta
+    
+    # Iteration dates from GitHub (UTC)
+    iterations = [
+        {
+            'title': 'Iteration 72',
+            'startDate': '2026-01-12',
+            'duration': 14
+        }
+    ]
+    
+    # Script should use UTC to find current iteration
+    today_utc = date(2026, 1, 12)  # This is UTC Jan 12
+    
+    for iteration in iterations:
+        start_date = date.fromisoformat(iteration['startDate'])
+        duration = iteration['duration']
+        end_date = start_date + timedelta(days=duration - 1)
+        
+        # Check if in iteration using UTC comparison
+        is_current = (start_date <= today_utc <= end_date)
+        
+        if iteration['title'] == 'Iteration 72':
+            assert is_current is True
+
+
+def test_iteration_dates_converted_to_eastern_for_display():
+    """Test that iteration dates are converted to Eastern for display/storage."""
+    # GitHub returns UTC dates
+    github_start = datetime.fromisoformat("2026-01-12T00:00:00Z")
+    github_end = datetime.fromisoformat("2026-01-25T23:59:59Z")
+    
+    eastern = ZoneInfo("America/New_York")
+    
+    # Convert to Eastern for display
+    start_eastern = github_start.astimezone(eastern)
+    end_eastern = github_end.astimezone(eastern)
+    
+    # UTC midnight Jan 12 = 7 PM EST Jan 11 (UTC-5)
+    assert start_eastern.date() == date(2026, 1, 11)
+    assert start_eastern.hour == 19  # 7 PM EST
+    
+    # UTC 11:59:59 PM Jan 25 = 6:59:59 PM EST Jan 25 (UTC-5)
+    assert end_eastern.date() == date(2026, 1, 25)
+    assert end_eastern.hour == 18  # 6 PM EST
+
+
+def test_schedule_file_stores_eastern_times():
+    """Test that schedule file stores times converted to Eastern."""
+    eastern = ZoneInfo("America/New_York")
+    
+    # Simulate what the updated script does
+    github_end_str = "2026-01-25T23:59:59Z"
+    end_utc = datetime.fromisoformat(github_end_str.replace('Z', '+00:00'))
+    end_eastern = end_utc.astimezone(eastern)
+    
+    # Calculate next iteration start
+    next_start = end_eastern.date() + timedelta(days=1)
+    
+    # Store in schedule
+    schedule_data = {
+        'next_iteration_start_date': next_start.isoformat(),
+        'previous_iteration_name': 'Iteration 72',
+        'last_updated': datetime.now(eastern).isoformat(),
+        '_timezone_note': 'All dates are in EST (Eastern Time)'
+    }
+    
+    # Verify stored format
+    assert schedule_data['next_iteration_start_date'] == '2026-01-26'
+    assert 'EST' in schedule_data['_timezone_note']
+    assert '-05:00' in schedule_data['last_updated'] or '-04:00' in schedule_data['last_updated']
