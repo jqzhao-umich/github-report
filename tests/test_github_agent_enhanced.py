@@ -274,6 +274,7 @@ class TestGitHubAgentCallTool:
         mock_repo.archived = False
         mock_repo.get_branches.return_value = []
         mock_repo.get_issues.return_value = []
+        mock_repo.get_pulls.return_value = []  # Add mock for PRs
         mock_org.get_repos.return_value = [mock_repo]
         
         mock_github.get_organization.return_value = mock_org
@@ -328,6 +329,7 @@ class TestGitHubAgentCallTool:
         mock_repo.get_commits.return_value = mock_branch_commits
         mock_repo.get_branches.return_value = [mock_branch]
         mock_repo.get_issues.return_value = []
+        mock_repo.get_pulls.return_value = []  # Add mock for PRs
         
         mock_org.get_repos.return_value = [mock_repo]
         mock_github.get_organization.return_value = mock_org
@@ -378,6 +380,7 @@ class TestGitHubAgentCallTool:
         mock_issue.closed_at = None
         
         mock_repo.get_issues.return_value = [mock_issue]
+        mock_repo.get_pulls.return_value = []  # Add mock for PRs
         mock_org.get_repos.return_value = [mock_repo]
         mock_github.get_organization.return_value = mock_org
         mock_github_class.return_value = mock_github
@@ -485,6 +488,7 @@ class TestGitHubAgentWithIteration:
         mock_repo.archived = False
         mock_repo.get_branches.return_value = []
         mock_repo.get_issues.return_value = []
+        mock_repo.get_pulls.return_value = []  # Add mock for PRs
         mock_org.get_repos.return_value = [mock_repo]
         
         mock_github.get_organization.return_value = mock_org

@@ -37,12 +37,20 @@ def create_mock_github_data():
             'user1': {
                 'commits': 5,
                 'assigned_issues': 3,
-                'closed_issues': 2
+                'closed_issues': 2,
+                'pr_created': 2,
+                'pr_reviewed': 3,
+                'pr_merged': 1,
+                'pr_commented': 4
             },
             'user2': {
                 'commits': 2,
                 'assigned_issues': 1,
-                'closed_issues': 1
+                'closed_issues': 1,
+                'pr_created': 1,
+                'pr_reviewed': 1,
+                'pr_merged': 0,
+                'pr_commented': 2
             }
         },
         'commit_details': {
@@ -52,7 +60,8 @@ def create_mock_github_data():
                     'message': 'Test commit',
                     'date': datetime.fromisoformat('2025-11-07T22:37:17')
                 }
-            ]
+            ],
+            'user2': []
         },
         'assigned_issues': {
             'user1': [
@@ -62,7 +71,8 @@ def create_mock_github_data():
                     'title': 'Test issue',
                     'state': 'open'
                 }
-            ]
+            ],
+            'user2': []
         },
         'closed_issues': {
             'user1': [
@@ -72,7 +82,34 @@ def create_mock_github_data():
                     'title': 'Closed issue',
                     'closed_date': datetime.fromisoformat('2025-11-07T22:37:17')
                 }
-            ]
+            ],
+            'user2': []
+        },
+        'pr_created': {
+            'user1': [
+                {
+                    'repo': 'test-repo',
+                    'number': 10,
+                    'title': 'Test PR',
+                    'state': 'open',
+                    'created_at': datetime.fromisoformat('2025-11-07T22:37:17'),
+                    'merged_at': None,
+                    'closed_at': None
+                }
+            ],
+            'user2': []
+        },
+        'pr_reviewed': {
+            'user1': [],
+            'user2': []
+        },
+        'pr_merged': {
+            'user1': [],
+            'user2': []
+        },
+        'pr_commented': {
+            'user1': [],
+            'user2': []
         }
     }
 
@@ -319,6 +356,97 @@ async def test_publish_report_failure(mock_env_vars, mock_server_context, mock_p
     finally:
         # Clean up test handler
         logger.removeHandler(test_handler)
+
+@pytest.mark.asyncio
+async def test_report_contains_pr_metrics(mock_env_vars, mock_server_context):
+    """Test that generated report includes PR metrics in summary table."""
+    # Setup mock responses
+    mock_server_context.call_tool.side_effect = [
+        [TextContent(type="text", text=str({
+            'name': 'Sprint 1',
+            'start_date': '2025-11-01',
+            'end_date': '2025-11-15'
+        }))],
+        [TextContent(type="text", text=serialize_github_data(create_mock_github_data()))]
+    ]
+
+    response = client.get("/api/github-report")
+    assert response.status_code == 200
+    
+    report_text = response.json() if response.headers['content-type'] == 'application/json' else response.text
+    if isinstance(report_text, dict):
+        report_text = str(report_text)
+    
+    # Verify PR metrics columns exist in summary table
+    assert "PRs Created" in report_text, "Missing 'PRs Created' column in summary"
+    assert "PRs Reviewed" in report_text, "Missing 'PRs Reviewed' column in summary"
+    assert "PRs Merged" in report_text, "Missing 'PRs Merged' column in summary"
+    assert "PRs Commented" in report_text, "Missing 'PRs Commented' column in summary"
+    
+    # Verify summary section exists
+    assert "SUMMARY" in report_text
+
+@pytest.mark.asyncio
+async def test_report_contains_pr_detail_sections(mock_env_vars, mock_server_context):
+    """Test that generated report includes PR detail sections."""
+    # Setup mock responses with PR data
+    mock_server_context.call_tool.side_effect = [
+        [TextContent(type="text", text=str({
+            'name': 'Sprint 1',
+            'start_date': '2025-11-01',
+            'end_date': '2025-11-15'
+        }))],
+        [TextContent(type="text", text=serialize_github_data(create_mock_github_data()))]
+    ]
+
+    response = client.get("/api/github-report")
+    assert response.status_code == 200
+    
+    report_text = response.json() if response.headers['content-type'] == 'application/json' else response.text
+    if isinstance(report_text, dict):
+        report_text = str(report_text)
+    
+    # Verify PR detail sections exist
+    assert "Pull Requests Created:" in report_text, "Missing 'Pull Requests Created' section"
+    assert "Pull Requests Reviewed:" in report_text, "Missing 'Pull Requests Reviewed' section"
+    assert "Pull Requests Merged:" in report_text, "Missing 'Pull Requests Merged' section"
+    assert "Pull Requests Commented:" in report_text, "Missing 'Pull Requests Commented' section"
+
+def test_pr_metrics_data_structure():
+    """Test that PR metrics data structure is correct."""
+    data = create_mock_github_data()
+    
+    # Verify PR metrics exist in member_stats
+    for user, stats in data['member_stats'].items():
+        assert 'pr_created' in stats, f"Missing pr_created for {user}"
+        assert 'pr_reviewed' in stats, f"Missing pr_reviewed for {user}"
+        assert 'pr_merged' in stats, f"Missing pr_merged for {user}"
+        assert 'pr_commented' in stats, f"Missing pr_commented for {user}"
+        
+        # Verify types
+        assert isinstance(stats['pr_created'], int)
+        assert isinstance(stats['pr_reviewed'], int)
+        assert isinstance(stats['pr_merged'], int)
+        assert isinstance(stats['pr_commented'], int)
+    
+    # Verify PR detail dictionaries exist
+    assert 'pr_created' in data
+    assert 'pr_reviewed' in data
+    assert 'pr_merged' in data
+    assert 'pr_commented' in data
+    
+    # Verify structure of PR details
+    for user in data['member_stats'].keys():
+        assert user in data['pr_created']
+        assert user in data['pr_reviewed']
+        assert user in data['pr_merged']
+        assert user in data['pr_commented']
+        
+        assert isinstance(data['pr_created'][user], list)
+        assert isinstance(data['pr_reviewed'][user], list)
+        assert isinstance(data['pr_merged'][user], list)
+        assert isinstance(data['pr_commented'][user], list)
+
 
 @pytest.mark.asyncio
 async def test_publish_report_invalid_data(mock_env_vars, mock_server_context):
