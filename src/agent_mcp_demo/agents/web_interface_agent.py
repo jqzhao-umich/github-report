@@ -368,13 +368,17 @@ async def github_report_api():
     # Summary section
     report.append("\nSUMMARY")
     report.append("=" * 60)
-    report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13}")
-    report.append("-" * 65)
+    report.append(f"{'User':20} | {'Commits':7} | {'Assigned Issues':14} | {'Closed Issues':13} | {'PRs Created':11} | {'PRs Reviewed':12} | {'PRs Merged':10} | {'PRs Commented':13}")
+    report.append("-" * 140)
     
     member_stats = github_data['member_stats']
     commit_details = github_data['commit_details']
     assigned_issues = github_data['assigned_issues']
     closed_issues = github_data['closed_issues']
+    pr_created = github_data.get('pr_created', {})
+    pr_reviewed = github_data.get('pr_reviewed', {})
+    pr_merged = github_data.get('pr_merged', {})
+    pr_commented = github_data.get('pr_commented', {})
     
     # Exclude the current user from the report
     current_user = get_github_username(GITHUB_TOKEN) if GITHUB_TOKEN else None
@@ -382,7 +386,7 @@ async def github_report_api():
     for login, stats in member_stats.items():
         if current_user and login == current_user:
             continue  # Skip myself
-        report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13}")
+        report.append(f"{login:20} | {stats['commits']:7} | {stats['assigned_issues']:14} | {stats['closed_issues']:13} | {stats.get('pr_created', 0):11} | {stats.get('pr_reviewed', 0):12} | {stats.get('pr_merged', 0):10} | {stats.get('pr_commented', 0):13}")
     
     # Detailed section
     report.append("\nDETAILED ACTIVITY")
@@ -391,7 +395,9 @@ async def github_report_api():
     for login, stats in member_stats.items():
         if current_user and login == current_user:
             continue  # Skip myself
-        if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
+        if (stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0 or 
+            stats.get('pr_created', 0) > 0 or stats.get('pr_reviewed', 0) > 0 or 
+            stats.get('pr_merged', 0) > 0 or stats.get('pr_commented', 0) > 0):
             report.append(f"\nUser: {login}")
             report.append("-" * 40)
             
@@ -410,6 +416,30 @@ async def github_report_api():
                 report.append("\nClosed Issues:")
                 for issue_info in closed_issues.get(login, []):
                     report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} (Closed on {issue_info['closed_date'].strftime('%Y-%m-%d')})")
+            
+            if stats.get('pr_created', 0) > 0:
+                report.append("\nPull Requests Created:")
+                for pr_info in pr_created.get(login, []):
+                    status = "Merged" if pr_info.get('merged_at') else ("Closed" if pr_info['state'] == "closed" else "Open")
+                    report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} ({status})")
+            
+            if stats.get('pr_reviewed', 0) > 0:
+                report.append("\nPull Requests Reviewed:")
+                for pr_info in pr_reviewed.get(login, []):
+                    status = "Merged" if pr_info.get('merged_at') else ("Closed" if pr_info['state'] == "closed" else "Open")
+                    report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} ({status})")
+            
+            if stats.get('pr_merged', 0) > 0:
+                report.append("\nPull Requests Merged:")
+                for pr_info in pr_merged.get(login, []):
+                    merged_date = pr_info.get('merged_at').strftime('%Y-%m-%d') if pr_info.get('merged_at') else 'N/A'
+                    report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} (Merged on {merged_date})")
+            
+            if stats.get('pr_commented', 0) > 0:
+                report.append("\nPull Requests Commented:")
+                for pr_info in pr_commented.get(login, []):
+                    status = "Merged" if pr_info.get('merged_at') else ("Closed" if pr_info['state'] == "closed" else "Open")
+                    report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} ({status})")
             
             report.append("")
     

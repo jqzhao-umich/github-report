@@ -329,14 +329,30 @@ async def handle_call_tool(
         commit_details = {}
         assigned_issues = {}
         closed_issues = {}
+        pr_created = {}
+        pr_reviewed = {}
+        pr_merged = {}
+        pr_commented = {}
         
         # Get members and setup tracking
         members = list(org.get_members())
         for member in members:
-            member_stats[member.login] = {"commits": 0, "assigned_issues": 0, "closed_issues": 0}
+            member_stats[member.login] = {
+                "commits": 0, 
+                "assigned_issues": 0, 
+                "closed_issues": 0,
+                "pr_created": 0,
+                "pr_reviewed": 0,
+                "pr_merged": 0,
+                "pr_commented": 0
+            }
             commit_details[member.login] = []
             assigned_issues[member.login] = []
             closed_issues[member.login] = []
+            pr_created[member.login] = []
+            pr_reviewed[member.login] = []
+            pr_merged[member.login] = []
+            pr_commented[member.login] = []
             
             try:
                 user = g.get_user(member.login)
@@ -364,6 +380,11 @@ async def handle_call_tool(
                 if iteration_info:
                     since = datetime.fromisoformat(iteration_info['start_date'])
                     until = datetime.fromisoformat(iteration_info['end_date'])
+                    # Make dates timezone-aware if they aren't
+                    if since.tzinfo is None:
+                        since = since.replace(tzinfo=timezone.utc)
+                    if until.tzinfo is None:
+                        until = until.replace(tzinfo=timezone.utc)
                 
                 for commit in repo.get_commits(sha=branch.name, since=since, until=until):
                     commit_info = {
@@ -390,6 +411,12 @@ async def handle_call_tool(
                             assignment_date = getattr(issue, 'assigned_at', None) or issue.created_at
                             iteration_start = datetime.fromisoformat(iteration_info['start_date'])
                             iteration_end = datetime.fromisoformat(iteration_info['end_date'])
+                            
+                            # Make iteration dates timezone-aware if they aren't
+                            if iteration_start.tzinfo is None:
+                                iteration_start = iteration_start.replace(tzinfo=timezone.utc)
+                            if iteration_end.tzinfo is None:
+                                iteration_end = iteration_end.replace(tzinfo=timezone.utc)
                             
                             if iteration_start <= assignment_date <= iteration_end:
                                 member_stats[assignee.login]["assigned_issues"] += 1
@@ -429,6 +456,96 @@ async def handle_call_tool(
                                     'title': issue.title,
                                     'closed_date': issue.closed_at
                                 })
+            
+            # Process pull requests
+            for pr in repo.get_pulls(state="all"):
+                # Determine if PR is in the iteration period
+                in_iteration = True
+                if iteration_info:
+                    iteration_start = datetime.fromisoformat(iteration_info['start_date'])
+                    iteration_end = datetime.fromisoformat(iteration_info['end_date'])
+                    
+                    # Make iteration dates timezone-aware if they aren't
+                    if iteration_start.tzinfo is None:
+                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
+                    if iteration_end.tzinfo is None:
+                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
+                    
+                    # Check if PR was created in this iteration
+                    pr_created_in_iteration = iteration_start <= pr.created_at <= iteration_end
+                    # Check if PR was merged in this iteration
+                    pr_merged_in_iteration = pr.merged_at and iteration_start <= pr.merged_at <= iteration_end
+                    # Check if PR was updated in this iteration (for reviews/comments)
+                    pr_updated_in_iteration = iteration_start <= pr.updated_at <= iteration_end
+                    
+                    in_iteration = pr_created_in_iteration or pr_merged_in_iteration or pr_updated_in_iteration
+                
+                if not in_iteration and iteration_info:
+                    continue
+                
+                pr_info = {
+                    'repo': repo.name,
+                    'number': pr.number,
+                    'title': pr.title,
+                    'state': pr.state,
+                    'created_at': pr.created_at,
+                    'merged_at': pr.merged_at,
+                    'closed_at': pr.closed_at
+                }
+                
+                # Track PR creator
+                if pr.user and pr.user.login in member_stats:
+                    if not iteration_info or (iteration_info and pr_created_in_iteration):
+                        member_stats[pr.user.login]["pr_created"] += 1
+                        pr_created[pr.user.login].append(pr_info)
+                
+                # Track PR merger (person who merged the PR)
+                if pr.merged and pr.merged_by and pr.merged_by.login in member_stats:
+                    if not iteration_info or (iteration_info and pr_merged_in_iteration):
+                        member_stats[pr.merged_by.login]["pr_merged"] += 1
+                        pr_merged[pr.merged_by.login].append(pr_info)
+                
+                # Track reviewers
+                try:
+                    reviews = pr.get_reviews()
+                    reviewer_set = set()
+                    for review in reviews:
+                        if review.user and review.user.login in member_stats:
+                            if not iteration_info or (iteration_info and 
+                                iteration_start <= review.submitted_at <= iteration_end):
+                                reviewer_set.add(review.user.login)
+                    
+                    for reviewer_login in reviewer_set:
+                        member_stats[reviewer_login]["pr_reviewed"] += 1
+                        if pr_info not in pr_reviewed[reviewer_login]:
+                            pr_reviewed[reviewer_login].append(pr_info)
+                except Exception as e:
+                    print(f"Error getting reviews for PR #{pr.number} in {repo.name}: {e}")
+                
+                # Track commenters
+                try:
+                    comments = pr.get_comments()
+                    commenter_set = set()
+                    for comment in comments:
+                        if comment.user and comment.user.login in member_stats:
+                            if not iteration_info or (iteration_info and 
+                                iteration_start <= comment.created_at <= iteration_end):
+                                commenter_set.add(comment.user.login)
+                    
+                    # Also check issue comments on PR
+                    issue_comments = pr.get_issue_comments()
+                    for comment in issue_comments:
+                        if comment.user and comment.user.login in member_stats:
+                            if not iteration_info or (iteration_info and 
+                                iteration_start <= comment.created_at <= iteration_end):
+                                commenter_set.add(comment.user.login)
+                    
+                    for commenter_login in commenter_set:
+                        member_stats[commenter_login]["pr_commented"] += 1
+                        if pr_info not in pr_commented[commenter_login]:
+                            pr_commented[commenter_login].append(pr_info)
+                except Exception as e:
+                    print(f"Error getting comments for PR #{pr.number} in {repo.name}: {e}")
         
         return [types.TextContent(
             type="text",
@@ -436,7 +553,11 @@ async def handle_call_tool(
                 "member_stats": member_stats,
                 "commit_details": commit_details,
                 "assigned_issues": assigned_issues,
-                "closed_issues": closed_issues
+                "closed_issues": closed_issues,
+                "pr_created": pr_created,
+                "pr_reviewed": pr_reviewed,
+                "pr_merged": pr_merged,
+                "pr_commented": pr_commented
             })
         )]
 
