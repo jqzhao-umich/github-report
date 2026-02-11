@@ -1,11 +1,21 @@
-"""
-Main MCP Coordinator
+"""Main Coordinator - MCP Server + Client (Orchestrator)
 
-This agent coordinates communication between all other agents in the system.
-It handles:
-- Request routing
+This is an MCP SERVER that also acts as a CLIENT to orchestrate other agents.
+
+Server role (provides tools):
+- get-github-report: Orchestrates report generation across multiple agents
+
+Client role (calls other agents):
+- Calls github-agent for iteration info and organization data
+- Calls web-interface-agent for report formatting
+
+Responsibilities:
+- Request routing between agents
 - Error handling and recovery
 - State synchronization
+- Agent communication coordination
+
+Architecture: Sits at the top of the agent hierarchy, coordinating workflows.
 """
 
 import mcp.types as types

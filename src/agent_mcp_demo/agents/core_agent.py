@@ -1,10 +1,21 @@
-"""
-Core MCP Agent
+"""Core Agent - MCP Server (Pure Provider, Demo/Utility)
 
-This agent handles basic note operations and state management. It provides the following capabilities:
-- Note storage and retrieval
-- Resource listing and access
-- Prompt generation and customization
+This is a pure MCP SERVER that provides basic note management capabilities.
+It does NOT call other agents (pure server, not a client).
+
+Provides:
+- Tools: add-note (create/update notes)
+- Resources: note:// URIs for accessing stored notes
+- Prompts: summarize-notes (generate summaries of all notes)
+
+Purpose: Demonstrates core MCP capabilities:
+- State management (in-memory note storage)
+- Resource exposure with custom URI schemes
+- Prompt generation with arguments
+- Tool execution with state modification
+
+Note: This is a reference implementation agent, not directly used by the
+GitHub reporting workflow. It serves as an example of MCP patterns.
 """
 
 import mcp.types as types

@@ -1,3 +1,24 @@
+"""Web Interface Agent - MCP Server + Client + FastAPI Server
+
+This is an MCP SERVER that also acts as a CLIENT and runs a FastAPI web server.
+
+Server roles:
+1. MCP Server: Provides tools for report generation (when used via MCP protocol)
+2. FastAPI Server: HTTP endpoints on port 8000 for web-based report access
+
+Client role (calls other agents):
+- Calls github-agent to fetch iteration info and organization data
+- Coordinates data from multiple sources for report generation
+
+HTTP Endpoints:
+- GET /: Web interface for viewing reports
+- GET /api/github-report: Generate and return report text
+- POST /api/reports/publish: Publish report to GitHub Pages
+
+Note: This agent bridges MCP protocol and HTTP, enabling both programmatic
+and web-based access to GitHub organization reports.
+"""
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware

@@ -1,3 +1,19 @@
+"""GitHub Agent - MCP Server (Pure Provider)
+
+This is an MCP SERVER that provides GitHub organization data tools.
+It does NOT call other agents (pure server, not a client).
+
+Provides tools:
+- get-iteration-info: Current iteration from GitHub Projects
+- get-github-data: Comprehensive org metrics including:
+  • Member commits with branch tracking and email matching
+  • Assigned and closed issues filtered by iteration dates
+  • Pull request metrics (created, reviewed, merged, commented)
+
+Called by: web_interface_agent, main_coordinator
+For standalone report generation (no MCP), see server.py instead.
+"""
+
 import mcp.types as types
 import os
 import json
@@ -21,6 +37,12 @@ try:
     from github import Github, Auth
 except ImportError:
     raise ImportError("PyGithub is required. Install it with: pip install PyGithub")
+
+from ..utils.pr_metrics import collect_pr_metrics
+from ..utils.iteration_info import get_current_iteration_info
+from ..utils.github_members import collect_members_and_emails, initialize_detail_structures
+from ..utils.commit_metrics import collect_commit_metrics
+from ..utils.issue_metrics import collect_issue_metrics
 
 import logging
 
@@ -294,10 +316,11 @@ async def handle_call_tool(
                 g = Github(auth=auth)
                 
                 # Test GitHub connection first
-                user = g.get_user()
-                if not user or not user.login:
+                current_user = g.get_user()
+                if not current_user or not current_user.login:
                     raise GitHubAuthError("Could not authenticate with GitHub API")
-                print(f"Successfully authenticated as: {user.login}")
+                current_user_login = current_user.login
+                print(f"Successfully authenticated as: {current_user_login}")
                 
                 # Test organization access
                 org = g.get_organization(org_name)
@@ -307,9 +330,9 @@ async def handle_call_tool(
                 
                 # Test org membership
                 try:
-                    user.get_organization_membership(org_name)
+                    current_user.get_organization_membership(org_name)
                 except:
-                    print(f"Warning: User {user.login} might not be a member of {org_name}, some data may be limited")
+                    print(f"Warning: User {current_user_login} might not be a member of {org_name}, some data may be limited")
                     
             except GitHubAuthError as e:
                 raise e
@@ -323,229 +346,61 @@ async def handle_call_tool(
             print(f"Error in get-github-data setup: {error_details}")
             raise GitHubError(f"Failed to setup GitHub data retrieval: {str(e)}")
         
-        # Initialize data structures
-        member_stats = {}
-        email_to_login = {}
-        commit_details = {}
-        assigned_issues = {}
-        closed_issues = {}
-        pr_created = {}
-        pr_reviewed = {}
-        pr_merged = {}
-        pr_commented = {}
+        # Collect members and build email mapping using shared utility
+        # Exclude current user to match GitHub Actions behavior
+        member_stats, email_to_login, member_logins = collect_members_and_emails(
+            g, org_name, exclude_user_login=current_user_login
+        )
         
-        # Get members and setup tracking
-        members = list(org.get_members())
-        for member in members:
-            member_stats[member.login] = {
-                "commits": 0, 
-                "assigned_issues": 0, 
-                "closed_issues": 0,
-                "pr_created": 0,
-                "pr_reviewed": 0,
-                "pr_merged": 0,
-                "pr_commented": 0
-            }
-            commit_details[member.login] = []
-            assigned_issues[member.login] = []
-            closed_issues[member.login] = []
-            pr_created[member.login] = []
-            pr_reviewed[member.login] = []
-            pr_merged[member.login] = []
-            pr_commented[member.login] = []
-            
-            try:
-                user = g.get_user(member.login)
-                if user.email:
-                    email_to_login[user.email.lower()] = member.login
-                try:
-                    emails = user.get_emails()
-                    for email in emails:
-                        if email.verified:
-                            email_to_login[email.email.lower()] = member.login
-                except:
-                    pass
-            except Exception as e:
-                print(f"Error getting emails for {member.login}: {e}")
+        # Initialize detail tracking structures using shared utility
+        details = initialize_detail_structures(member_logins)
+        commit_details = details['commit_details']
+        assigned_issues = details['assigned_issues']
+        closed_issues = details['closed_issues']
+        pr_created = details['pr_created']
+        pr_reviewed = details['pr_reviewed']
+        pr_merged = details['pr_merged']
+        pr_commented = details['pr_commented']
         
         # Process repositories
         for repo in org.get_repos():
             if repo.archived:
                 continue
-                
-            # Process commits
-            for branch in repo.get_branches():
-                since = None
-                until = None
-                if iteration_info:
-                    since = datetime.fromisoformat(iteration_info['start_date'])
-                    until = datetime.fromisoformat(iteration_info['end_date'])
-                    # Make dates timezone-aware if they aren't
-                    if since.tzinfo is None:
-                        since = since.replace(tzinfo=timezone.utc)
-                    if until.tzinfo is None:
-                        until = until.replace(tzinfo=timezone.utc)
-                
-                for commit in repo.get_commits(sha=branch.name, since=since, until=until):
-                    commit_info = {
-                        'repo': repo.name,
-                        'message': commit.commit.message.split('\n')[0],
-                        'date': commit.commit.author.date,
-                        'sha': commit.sha[:7],
-                        'branch': branch.name
-                    }
-                    
-                    if commit.author and commit.author.login in member_stats:
-                        member_stats[commit.author.login]["commits"] += 1
-                        commit_details[commit.author.login].append(commit_info)
-                    elif commit.commit.author.email and commit.commit.author.email.lower() in email_to_login:
-                        login = email_to_login[commit.commit.author.email.lower()]
-                        member_stats[login]["commits"] += 1
-                        commit_details[login].append(commit_info)
             
-            # Process issues
-            for issue in repo.get_issues(state="all"):
-                for assignee in issue.assignees:
-                    if assignee.login in member_stats:
-                        if iteration_info:
-                            assignment_date = getattr(issue, 'assigned_at', None) or issue.created_at
-                            iteration_start = datetime.fromisoformat(iteration_info['start_date'])
-                            iteration_end = datetime.fromisoformat(iteration_info['end_date'])
-                            
-                            # Make iteration dates timezone-aware if they aren't
-                            if iteration_start.tzinfo is None:
-                                iteration_start = iteration_start.replace(tzinfo=timezone.utc)
-                            if iteration_end.tzinfo is None:
-                                iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                            
-                            if iteration_start <= assignment_date <= iteration_end:
-                                member_stats[assignee.login]["assigned_issues"] += 1
-                                assigned_issues[assignee.login].append({
-                                    'repo': repo.name,
-                                    'number': issue.number,
-                                    'title': issue.title,
-                                    'state': issue.state,
-                                    'assigned_date': assignment_date
-                                })
-                            
-                            if issue.state == "closed" and issue.closed_at:
-                                closed_date = issue.closed_at
-                                if iteration_start <= closed_date <= iteration_end:
-                                    member_stats[assignee.login]["closed_issues"] += 1
-                                    closed_issues[assignee.login].append({
-                                        'repo': repo.name,
-                                        'number': issue.number,
-                                        'title': issue.title,
-                                        'closed_date': closed_date
-                                    })
-                        else:
-                            member_stats[assignee.login]["assigned_issues"] += 1
-                            assigned_issues[assignee.login].append({
-                                'repo': repo.name,
-                                'number': issue.number,
-                                'title': issue.title,
-                                'state': issue.state,
-                                'assigned_date': issue.created_at
-                            })
-                            
-                            if issue.state == "closed":
-                                member_stats[assignee.login]["closed_issues"] += 1
-                                closed_issues[assignee.login].append({
-                                    'repo': repo.name,
-                                    'number': issue.number,
-                                    'title': issue.title,
-                                    'closed_date': issue.closed_at
-                                })
+            # Collect commit metrics using shared utility
+            collect_commit_metrics(
+                repo, member_stats, email_to_login, commit_details,
+                iteration_info, exclude_user_login=current_user_login
+            )
             
-            # Process pull requests
-            for pr in repo.get_pulls(state="all"):
-                # Determine if PR is in the iteration period
-                in_iteration = True
-                if iteration_info:
-                    iteration_start = datetime.fromisoformat(iteration_info['start_date'])
-                    iteration_end = datetime.fromisoformat(iteration_info['end_date'])
-                    
-                    # Make iteration dates timezone-aware if they aren't
-                    if iteration_start.tzinfo is None:
-                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
-                    if iteration_end.tzinfo is None:
-                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                    
-                    # Check if PR was created in this iteration
-                    pr_created_in_iteration = iteration_start <= pr.created_at <= iteration_end
-                    # Check if PR was merged in this iteration
-                    pr_merged_in_iteration = pr.merged_at and iteration_start <= pr.merged_at <= iteration_end
-                    # Check if PR was updated in this iteration (for reviews/comments)
-                    pr_updated_in_iteration = iteration_start <= pr.updated_at <= iteration_end
-                    
-                    in_iteration = pr_created_in_iteration or pr_merged_in_iteration or pr_updated_in_iteration
-                
-                if not in_iteration and iteration_info:
-                    continue
-                
-                pr_info = {
-                    'repo': repo.name,
-                    'number': pr.number,
-                    'title': pr.title,
-                    'state': pr.state,
-                    'created_at': pr.created_at,
-                    'merged_at': pr.merged_at,
-                    'closed_at': pr.closed_at
-                }
-                
-                # Track PR creator
-                if pr.user and pr.user.login in member_stats:
-                    if not iteration_info or (iteration_info and pr_created_in_iteration):
-                        member_stats[pr.user.login]["pr_created"] += 1
-                        pr_created[pr.user.login].append(pr_info)
-                
-                # Track PR merger (person who merged the PR)
-                if pr.merged and pr.merged_by and pr.merged_by.login in member_stats:
-                    if not iteration_info or (iteration_info and pr_merged_in_iteration):
-                        member_stats[pr.merged_by.login]["pr_merged"] += 1
-                        pr_merged[pr.merged_by.login].append(pr_info)
-                
-                # Track reviewers
-                try:
-                    reviews = pr.get_reviews()
-                    reviewer_set = set()
-                    for review in reviews:
-                        if review.user and review.user.login in member_stats:
-                            if not iteration_info or (iteration_info and 
-                                iteration_start <= review.submitted_at <= iteration_end):
-                                reviewer_set.add(review.user.login)
-                    
-                    for reviewer_login in reviewer_set:
-                        member_stats[reviewer_login]["pr_reviewed"] += 1
-                        if pr_info not in pr_reviewed[reviewer_login]:
-                            pr_reviewed[reviewer_login].append(pr_info)
-                except Exception as e:
-                    print(f"Error getting reviews for PR #{pr.number} in {repo.name}: {e}")
-                
-                # Track commenters
-                try:
-                    comments = pr.get_comments()
-                    commenter_set = set()
-                    for comment in comments:
-                        if comment.user and comment.user.login in member_stats:
-                            if not iteration_info or (iteration_info and 
-                                iteration_start <= comment.created_at <= iteration_end):
-                                commenter_set.add(comment.user.login)
-                    
-                    # Also check issue comments on PR
-                    issue_comments = pr.get_issue_comments()
-                    for comment in issue_comments:
-                        if comment.user and comment.user.login in member_stats:
-                            if not iteration_info or (iteration_info and 
-                                iteration_start <= comment.created_at <= iteration_end):
-                                commenter_set.add(comment.user.login)
-                    
-                    for commenter_login in commenter_set:
-                        member_stats[commenter_login]["pr_commented"] += 1
-                        if pr_info not in pr_commented[commenter_login]:
-                            pr_commented[commenter_login].append(pr_info)
-                except Exception as e:
-                    print(f"Error getting comments for PR #{pr.number} in {repo.name}: {e}")
+            # Collect issue metrics using shared utility
+            collect_issue_metrics(
+                repo, member_stats, assigned_issues, closed_issues,
+                iteration_info
+            )
+            
+            # Collect PR metrics using shared utility
+            repo_pr_created, repo_pr_reviewed, repo_pr_merged, repo_pr_commented = collect_pr_metrics(
+                repo, member_stats, iteration_info, current_user_login=current_user_login
+            )
+            
+            # Merge PR metrics for this repo into overall metrics
+            for login, prs in repo_pr_created.items():
+                if login not in pr_created:
+                    pr_created[login] = []
+                pr_created[login].extend(prs)
+            for login, prs in repo_pr_reviewed.items():
+                if login not in pr_reviewed:
+                    pr_reviewed[login] = []
+                pr_reviewed[login].extend(prs)
+            for login, prs in repo_pr_merged.items():
+                if login not in pr_merged:
+                    pr_merged[login] = []
+                pr_merged[login].extend(prs)
+            for login, prs in repo_pr_commented.items():
+                if login not in pr_commented:
+                    pr_commented[login] = []
+                pr_commented[login].extend(prs)
         
         return [types.TextContent(
             type="text",

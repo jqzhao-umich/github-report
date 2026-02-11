@@ -1,4 +1,24 @@
+"""GitHub Report Server - Dual Purpose: Standalone Function + MCP Server
 
+This module contains:
+
+1. STANDALONE FUNCTION: github_report_api()
+   - Collects GitHub metrics WITHOUT using MCP
+   - Used by: GitHub Actions workflows for scheduled reports
+   - Directly accesses GitHub API (no agent coordination)
+   
+2. MCP SERVER: Main coordinator server
+   - Provides: MCP tools for orchestration
+   - Also includes: FastAPI web server on port 8000
+   - Scheduled report generation based on iteration cycles
+
+3. SHARED UTILITIES:
+   - Report publishing to GitHub Pages
+   - Git operations for automated deployment
+
+Note: Both the standalone function and github_agent.py collect the same metrics,
+but via different mechanisms (direct API vs MCP protocol).
+"""
 
 import asyncio
 import json
@@ -27,6 +47,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from agent_mcp_demo.utils.report_publisher import ReportPublisher
 from agent_mcp_demo.utils.git_operations import GitOperations
 from agent_mcp_demo.utils.report_scheduler import ReportScheduler
+from agent_mcp_demo.utils.pr_metrics import collect_pr_metrics
+from agent_mcp_demo.utils.iteration_info import get_current_iteration_info
+from agent_mcp_demo.utils.github_members import collect_members_and_emails, initialize_detail_structures
+from agent_mcp_demo.utils.commit_metrics import collect_commit_metrics
+from agent_mcp_demo.utils.issue_metrics import collect_issue_metrics
 
 # Initialize the report publisher and git operations
 publisher = ReportPublisher()
@@ -275,331 +300,14 @@ def read_from_json_file(filepath: str) -> dict:
         return json.load(f)
 
 # Agent 3: Get iteration information from GitHub Projects (GraphQL API)
-def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
+# NOTE: This function has been moved to utils/iteration_info.py
+# This is kept as a wrapper for backwards compatibility
+def get_current_iteration_info_deprecated(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
     """
-    Get current iteration information from GitHub Projects using GraphQL API
+    DEPRECATED: Moved to utils/iteration_info.py
+    This wrapper kept for backwards compatibility
     """
-    try:
-        import requests
-        import json
-        
-        headers = {
-            'Authorization': f'Bearer {github_token}',
-            'Content-Type': 'application/json',
-        }
-        
-        # GraphQL query to get organization projects
-        query = """
-        query($orgName: String!) {
-          organization(login: $orgName) {
-            projectsV2(first: 20) {
-              nodes {
-                id
-                title
-                number
-                url
-              }
-            }
-          }
-        }
-        """
-        
-        variables = {
-            "orgName": org_name
-        }
-        
-        response = requests.post(
-            'https://api.github.com/graphql',
-            headers=headers,
-            json={'query': query, 'variables': variables}
-        )
-        
-        if response.status_code != 200:
-            print(f"Error getting projects via GraphQL: {response.status_code} - {response.text}")
-            return None
-        
-        data = response.json()
-        
-        if 'errors' in data:
-            print(f"GraphQL errors: {data['errors']}")
-            return None
-        
-        projects = data['data']['organization']['projectsV2']['nodes']
-        print(f"Found {len(projects)} projects in organization")
-        
-        # Find the specific project
-        target_project = None
-        for project in projects:
-            if project.get('title') == project_name:
-                target_project = project
-                break
-        
-        if not target_project:
-            print(f"Project '{project_name}' not found in organization '{org_name}'")
-            print(f"Available projects: {[p.get('title') for p in projects]}")
-            # Fall through to environment variable fallback
-        else:
-            print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
-            
-            # Try to get project fields using GraphQL
-            fields_query = """
-            query($projectId: ID!) {
-              node(id: $projectId) {
-                ... on ProjectV2 {
-                  fields(first: 50) {
-                    nodes {
-                      ... on ProjectV2Field {
-                        id
-                        name
-                        dataType
-                      }
-                      ... on ProjectV2IterationField {
-                        id
-                        name
-                        configuration {
-                          iterations {
-                            id
-                            title
-                            startDate
-                            duration
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            """
-            
-            fields_variables = {
-                "projectId": target_project.get('id')
-            }
-            
-            fields_response = requests.post(
-                'https://api.github.com/graphql',
-                headers=headers,
-                json={'query': fields_query, 'variables': fields_variables}
-            )
-            
-            print(f"Fields response status: {fields_response.status_code}")
-            if fields_response.status_code == 200:
-                fields_data = fields_response.json()
-                print(f"Fields response: {json.dumps(fields_data, indent=2)}")
-                
-                if 'data' in fields_data and fields_data['data']['node']:
-                    fields = fields_data['data']['node']['fields']['nodes']
-                    print(f"Found {len(fields)} project fields")
-                    
-                    # Look for iteration fields
-                    for field in fields:
-                        print(f"Field type: {field.get('__typename')}, name: {field.get('name')}")
-                        
-                        # Check if this is an iteration field by name or type
-                        if (field.get('__typename') == 'ProjectV2IterationField' or 
-                            field.get('name', '').lower() == 'iteration'):
-                            print(f"Found iteration field: {json.dumps(field, indent=2)}")
-                            
-                            # Check if this field has configuration with iterations
-                            if 'configuration' in field and 'iterations' in field['configuration']:
-                                iterations = field['configuration']['iterations']
-                                print(f"Found {len(iterations)} iterations")
-                                if iterations:
-                                    # Find the current or previous iteration based on today's date in Eastern Time
-                                    from datetime import datetime, timedelta
-                                    from zoneinfo import ZoneInfo
-                                    today = datetime.now(ZoneInfo("America/New_York")).date()
-                                    target_iteration = None
-                                    
-                                    # First, find which iteration we're in
-                                    current_iteration_index = None
-                                    for idx, iteration in enumerate(iterations):
-                                        start_date = iteration.get('startDate')
-                                        duration = iteration.get('duration')
-                                        
-                                        if start_date and duration:
-                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
-                                            end_dt = start_dt + timedelta(days=duration)
-                                            
-                                            # Check if today falls within this iteration
-                                            if start_dt <= today <= end_dt:
-                                                current_iteration_index = idx
-                                                print(f"Today is in: {iteration.get('title')} ({start_date} to {end_dt})")
-                                                
-                                                # If today is the first day of iteration, use previous iteration
-                                                if today == start_dt:
-                                                    if idx > 0:
-                                                        # Previous iteration is in the list
-                                                        target_iteration = iterations[idx - 1]
-                                                        prev_start_dt = datetime.fromisoformat(target_iteration.get('startDate').replace('Z', '+00:00')).date()
-                                                        prev_end_dt = prev_start_dt + timedelta(days=target_iteration.get('duration'))
-                                                        print(f"First day of iteration - using previous iteration: {target_iteration.get('title')} ({target_iteration.get('startDate')} to {prev_end_dt})")
-                                                    else:
-                                                        # Previous iteration not in list, calculate it
-                                                        prev_end_dt = start_dt - timedelta(days=1)
-                                                        prev_start_dt = prev_end_dt - timedelta(days=duration - 1)
-                                                        
-                                                        # Extract iteration number and create previous iteration info
-                                                        import re
-                                                        match = re.search(r'(\d+)', iteration.get('title', ''))
-                                                        if match:
-                                                            current_num = int(match.group(1))
-                                                            prev_title = iteration.get('title', 'Iteration').replace(str(current_num), str(current_num - 1))
-                                                        else:
-                                                            prev_title = 'Previous Iteration'
-                                                        
-                                                        target_iteration = {
-                                                            'title': prev_title,
-                                                            'startDate': prev_start_dt.isoformat(),
-                                                            'duration': duration
-                                                        }
-                                                        print(f"First day of iteration - calculated previous iteration: {prev_title} ({prev_start_dt} to {prev_end_dt})")
-                                                else:
-                                                    # Otherwise use current iteration
-                                                    target_iteration = iteration
-                                                    print(f"Using current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
-                                                break
-                                    
-                                    # If no current iteration found, use the most recent past iteration
-                                    if not target_iteration:
-                                        for iteration in reversed(iterations):
-                                            start_date = iteration.get('startDate')
-                                            duration = iteration.get('duration')
-                                            
-                                            if start_date and duration:
-                                                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
-                                                end_dt = start_dt + timedelta(days=duration)
-                                                
-                                                # Use the most recent iteration that has ended
-                                                if end_dt < today:
-                                                    target_iteration = iteration
-                                                    print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
-                                                    break
-                                    
-                                    # If still no iteration found, use the first one (fallback)
-                                    if not target_iteration and iterations:
-                                        target_iteration = iterations[0]
-                                        print(f"Using fallback iteration: {target_iteration.get('title')}")
-                                    
-                                    if target_iteration:
-                                        # Calculate end date from start date and duration
-                                        start_date = target_iteration.get('startDate')
-                                        duration = target_iteration.get('duration')
-                                        
-                                        if start_date and duration:
-                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                                            end_dt = start_dt + timedelta(days=duration)
-                                            end_date = end_dt.isoformat()
-                                        else:
-                                            end_date = None
-                                        
-                                        return {
-                                            'name': target_iteration.get('title', 'Current Sprint'),
-                                            'start_date': start_date,
-                                            'end_date': end_date,
-                                            'path': f"{org_name}/{project_name}"
-                                        }
-                            
-                            # If we found an iteration field but couldn't get configuration, 
-                            # try to get the field ID and query it separately
-                            field_id = field.get('id')
-                            if field_id:
-                                print(f"Trying to get iteration data for field ID: {field_id}")
-                                
-                                # Try to get iteration data from the field response
-                                if 'data' in fields_data and 'node' in fields_data['data']:
-                                    node_data = fields_data['data']['node']
-                                    if 'fields' in node_data and 'nodes' in node_data['fields']:
-                                        for field_node in node_data['fields']['nodes']:
-                                            if field_node.get('__typename') == 'ProjectV2IterationField':
-                                                if 'configuration' in field_node and 'iterations' in field_node['configuration']:
-                                                    iterations = field_node['configuration']['iterations']
-                                                    if iterations:
-                                                        # Find the current iteration based on today's date
-                                                        from datetime import datetime, timedelta
-                                                        today = datetime.now().date()
-                                                        current_iteration = None
-                                                        
-                                                        for iteration in iterations:
-                                                            start_date = iteration.get('startDate')
-                                                            duration = iteration.get('duration')
-                                                            
-                                                            if start_date and duration:
-                                                                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
-                                                                end_dt = start_dt + timedelta(days=duration)
-                                                                
-                                                                # Check if today falls within this iteration
-                                                                if start_dt <= today <= end_dt:
-                                                                    current_iteration = iteration
-                                                                    print(f"Found current iteration: {iteration.get('title')} ({start_date} to {end_dt})")
-                                                                    break
-                                                        
-                                                        # If no current iteration found, use the most recent past iteration
-                                                        if not current_iteration:
-                                                            for iteration in reversed(iterations):
-                                                                start_date = iteration.get('startDate')
-                                                                duration = iteration.get('duration')
-                                                                
-                                                                if start_date and duration:
-                                                                    start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
-                                                                    end_dt = start_dt + timedelta(days=duration)
-                                                                    
-                                                                    # Use the most recent iteration that has ended
-                                                                    if end_dt < today:
-                                                                        current_iteration = iteration
-                                                                        print(f"Using most recent past iteration: {iteration.get('title')} ({start_date} to {end_dt})")
-                                                                        break
-                                                        
-                                                        # If still no iteration found, use the first one (fallback)
-                                                        if not current_iteration and iterations:
-                                                            current_iteration = iterations[0]
-                                                            print(f"Using fallback iteration: {current_iteration.get('title')}")
-                                                        
-                                                        if current_iteration:
-                                                            # Calculate end date from start date and duration
-                                                            start_date = current_iteration.get('startDate')
-                                                            duration = current_iteration.get('duration')
-                                                        
-                                                        if start_date and duration:
-                                                            from datetime import datetime, timedelta
-                                                            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                                                            end_dt = start_dt + timedelta(days=duration)
-                                                            end_date = end_dt.isoformat()
-                                                        else:
-                                                            end_date = None
-                                                        
-                                                        return {
-                                                            'name': current_iteration.get('title', 'Current Sprint'),
-                                                            'start_date': start_date,
-                                                            'end_date': end_date,
-                                                            'path': f"{org_name}/{project_name}"
-                                                        }
-                                
-                                print("Iteration field found but configuration not accessible, falling back to environment variables")
-                else:
-                    print(f"No project data found in response")
-            else:
-                print(f"Fields request failed: {fields_response.status_code} - {fields_response.text}")
-        
-        # Fall back to environment variables
-        iteration_start = os.environ.get("GITHUB_ITERATION_START")
-        iteration_end = os.environ.get("GITHUB_ITERATION_END")
-        iteration_name = os.environ.get("GITHUB_ITERATION_NAME", "Current Sprint")
-        
-        if iteration_start and iteration_end:
-            return {
-                'name': iteration_name,
-                'start_date': iteration_start,
-                'end_date': iteration_end,
-                'path': f"{org_name}/{project_name}"
-            }
-        else:
-            print("No iteration dates found in environment variables")
-            return None
-            
-    except Exception as e:
-        print(f"Error getting iteration info from GitHub Projects: {e}")
-        return None
+    return get_current_iteration_info(github_token, org_name, project_name)
 
 
 server = Server("agent-mcp-demo")
@@ -839,47 +547,20 @@ async def github_report_api():
         except Exception as e:
             return f"Error accessing organization '{ORG_NAME}': {str(e)}\n\nPlease check your organization name and permissions."
         
-        # Get members with timeout
-        try:
-            members = list(org.get_members())
-            print(f"Found {len(members)} members")
-        except Exception as e:
-            return f"Error getting organization members: {str(e)}"
+        # Collect members and build email mapping using shared utility
+        member_stats, email_to_login, member_logins = collect_members_and_emails(
+            g, ORG_NAME, exclude_user_login=current_user_login
+        )
         
-        # Build member stats and email mapping (excluding current user)
-        member_stats = {}
-        email_to_login = {}
-        commit_details = {}
-        assigned_issues = {}
-        closed_issues = {}
-        
-        for member in members:
-            # Skip the current user
-            if member.login == current_user_login:
-                print(f"Skipping current user: {member.login}")
-                continue
-                
-            member_stats[member.login] = {"commits": 0, "assigned_issues": 0, "closed_issues": 0}
-            commit_details[member.login] = []
-            assigned_issues[member.login] = []
-            closed_issues[member.login] = []
-            try:
-                # Get user details including email
-                user = g.get_user(member.login)
-                if user.email:  # Primary email
-                    email_to_login[user.email.lower()] = member.login
-                # Get all emails if we have permission
-                try:
-                    emails = user.get_emails()
-                    for email in emails:
-                        if email.verified:  # Only use verified emails
-                            email_to_login[email.email.lower()] = member.login
-                except:
-                    pass  # Skip if we don't have permission to see emails
-            except Exception as e:
-                print(f"Error getting emails for {member.login}: {e}")
-        
-        print(f"Found {len(email_to_login)} email mappings for {len(member_stats)} members")
+        # Initialize detail tracking structures using shared utility  
+        details = initialize_detail_structures(member_logins)
+        commit_details = details['commit_details']
+        assigned_issues = details['assigned_issues']
+        closed_issues = details['closed_issues']
+        pr_created = details['pr_created']
+        pr_reviewed = details['pr_reviewed']
+        pr_merged = details['pr_merged']
+        pr_commented = details['pr_commented']
         
         # Filter by iteration dates if available
         iteration_start = None
@@ -903,197 +584,46 @@ async def github_report_api():
                 continue
                 
             repo_count += 1
-            # Removed artificial limit to process all repositories
                 
-            # Commits per user from all branches (filtered by iteration if available)
+            # Collect commit metrics using shared utility
+            commits_processed = collect_commit_metrics(
+                repo, member_stats, email_to_login, commit_details,
+                iteration_info, exclude_user_login=current_user_login
+            )
+            total_commits_processed += commits_processed
+            
+            # Collect issue metrics using shared utility
+            assigned_count, closed_count = collect_issue_metrics(
+                repo, member_stats, assigned_issues, closed_issues,
+                iteration_info
+            )
+            total_issues_processed += (assigned_count + closed_count)
+            
+            # Process pull requests using shared utility
             try:
-                # Get all branches for this repository
-                branches = repo.get_branches()
-                processed_commits = set()  # Track unique commits across branches
+                repo_pr_created, repo_pr_reviewed, repo_pr_merged, repo_pr_commented = collect_pr_metrics(
+                    repo, member_stats, iteration_info, current_user_login=current_user_login
+                )
                 
-                for branch in branches:
-                    try:
-                        print(f"Processing branch {branch.name} in {repo.name}")
-                        # Use since parameter to limit to relevant commits if iteration dates are set
-                        since = iteration_start if iteration_start else None
-                        until = iteration_end if iteration_end else None
-                        
-                        for commit in repo.get_commits(sha=branch.name, since=since, until=until):
-                            # Skip if we've already processed this commit from another branch
-                            if commit.sha in processed_commits:
-                                continue
-                            processed_commits.add(commit.sha)
-                            total_commits_processed += 1
-                            
-                            # Filter by iteration dates if available
-                            if iteration_start and iteration_end:
-                                try:
-                                    commit_date = commit.commit.author.date
-                                    # Make sure both dates are timezone-aware for comparison
-                                    if commit_date.tzinfo is None:
-                                        # If commit_date is naive, assume UTC
-                                        from datetime import timezone
-                                        commit_date = commit_date.replace(tzinfo=timezone.utc)
-                                    
-                                    # Ensure iteration dates are also timezone-aware
-                                    if iteration_start.tzinfo is None:
-                                        iteration_start = iteration_start.replace(tzinfo=timezone.utc)
-                                    if iteration_end.tzinfo is None:
-                                        iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                                    
-                                    if not (iteration_start <= commit_date <= iteration_end):
-                                        continue
-                                    else:
-                                        print(f"Found commit in iteration: {commit.commit.message[:50]}... by {commit.author.login if commit.author else 'Unknown'} on branch {branch.name}")
-                                except AttributeError:
-                                    # Skip commits with invalid author data
-                                    continue
-                            
-                            # Try to match the commit to a member
-                            matched = False
-                            commit_info = {
-                                'repo': repo.name,
-                                'message': commit.commit.message.split('\n')[0],  # First line of commit message
-                                'date': commit.commit.author.date,
-                                'sha': commit.sha[:7],
-                                'branch': branch.name
-                            }
-                            
-                            # First try GitHub API author if available
-                            if commit.author and hasattr(commit.author, 'login'):
-                                login = commit.author.login
-                                # Skip if it's the current user
-                                if login == current_user_login:
-                                    continue
-                                if login in member_stats:
-                                    member_stats[login]["commits"] += 1
-                                    commit_details[login].append(commit_info)
-                                    matched = True
-                                    print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
-                                    continue  # Move to next commit since we found a match
-                            
-                            # Try email mapping
-                            if hasattr(commit.commit.author, 'email') and commit.commit.author.email:
-                                author_email = commit.commit.author.email.lower()
-                                if author_email in email_to_login:
-                                    member_login = email_to_login[author_email]
-                                    # Skip if it's the current user
-                                    if member_login == current_user_login:
-                                        continue
-                                    member_stats[member_login]["commits"] += 1
-                                    commit_details[member_login].append(commit_info)
-                                    matched = True
-                                    print(f"Matched commit {commit.sha[:7]} on {branch.name} to {member_login} via email {author_email}")
-                                    continue  # Move to next commit since we found a match
-                                
-                                # Try to match by username in email
-                                email_username = author_email.split('@')[0]
-                                for member_login in member_stats.keys():
-                                    if member_login.lower() in email_username.lower() or email_username.lower() in member_login.lower():
-                                        member_stats[member_login]["commits"] += 1
-                                        commit_details[member_login].append(commit_info)
-                                        matched = True
-                                        print(f"Matched commit {commit.sha[:7]} on {branch.name} to {member_login} via username in email {author_email}")
-                                        break
-                                
-                                if matched:
-                                    continue  # Move to next commit since we found a match
-                            
-                            # If still not matched, log it for debugging
-                            author_name = commit.commit.author.name if commit.commit.author else "Unknown"
-                            author_email = commit.commit.author.email if commit.commit.author else "Unknown"
-                            print(f"Unmatched commit {commit.sha[:7]} on {branch.name} by {author_name} <{author_email}>")
-                            
-                    except Exception as e:
-                        print(f"Error getting commits for branch {branch.name} in {repo.name}: {e}")
-                        continue
+                # Merge PR metrics for this repo into overall metrics
+                for login, prs in repo_pr_created.items():
+                    if login not in pr_created:
+                        pr_created[login] = []
+                    pr_created[login].extend(prs)
+                for login, prs in repo_pr_reviewed.items():
+                    if login not in pr_reviewed:
+                        pr_reviewed[login] = []
+                    pr_reviewed[login].extend(prs)
+                for login, prs in repo_pr_merged.items():
+                    if login not in pr_merged:
+                        pr_merged[login] = []
+                    pr_merged[login].extend(prs)
+                for login, prs in repo_pr_commented.items():
+                    if login not in pr_commented:
+                        pr_commented[login] = []
+                    pr_commented[login].extend(prs)
             except Exception as e:
-                print(f"Error getting branches for {repo.name}: {e}")
-                continue
-                
-            # Assigned and closed issues per user (filtered by assignment/closed dates)
-            try:
-                issue_count = 0
-                # Get both open and closed issues
-                for issue in repo.get_issues(state="all"):
-                    issue_count += 1
-                    total_issues_processed += 1
-                    if issue_count > 500:  # Increased limit to 500 issues per repo
-                        break
-                    
-                    # Track assignees for both open and closed issues
-                    for assignee in issue.assignees:
-                        # Skip if it's the current user
-                        if assignee.login == current_user_login:
-                            continue
-                        if assignee.login in member_stats:
-                            # Track both open and closed issues for each user
-                            from datetime import timezone
-                            
-                            # Get assignment date
-                            assignment_date = getattr(issue, 'assigned_at', None) or issue.created_at
-                            if assignment_date.tzinfo is None:
-                                assignment_date = assignment_date.replace(tzinfo=timezone.utc)
-                            
-                            # Get closed date if applicable
-                            closed_date = None
-                            if issue.state == "closed" and issue.closed_at:
-                                closed_date = issue.closed_at
-                                if closed_date.tzinfo is None:
-                                    closed_date = closed_date.replace(tzinfo=timezone.utc)
-                            
-                            # Make iteration dates timezone-aware if needed
-                            if iteration_start and iteration_end:
-                                if iteration_start.tzinfo is None:
-                                    iteration_start = iteration_start.replace(tzinfo=timezone.utc)
-                                if iteration_end.tzinfo is None:
-                                    iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                                
-                                # Check if issue was assigned during iteration
-                                if iteration_start <= assignment_date <= iteration_end:
-                                    member_stats[assignee.login]["assigned_issues"] += 1
-                                    assigned_issues[assignee.login].append({
-                                        'repo': repo.name,
-                                        'number': issue.number,
-                                        'title': issue.title,
-                                        'state': issue.state,
-                                        'assigned_date': assignment_date
-                                    })
-                                    print(f"Found assigned issue in iteration: {issue.title[:50]}... assigned to {assignee.login}")
-                                
-                                # Check if issue was closed during iteration
-                                if closed_date and iteration_start <= closed_date <= iteration_end:
-                                    member_stats[assignee.login]["closed_issues"] += 1
-                                    closed_issues[assignee.login].append({
-                                        'repo': repo.name,
-                                        'number': issue.number,
-                                        'title': issue.title,
-                                        'closed_date': closed_date
-                                    })
-                                    print(f"Found closed issue in iteration: {issue.title[:50]}... closed by {assignee.login}")
-                            else:
-                                # If no iteration filter, count all issues
-                                member_stats[assignee.login]["assigned_issues"] += 1
-                                assigned_issues[assignee.login].append({
-                                    'repo': repo.name,
-                                    'number': issue.number,
-                                    'title': issue.title,
-                                    'state': issue.state,
-                                    'assigned_date': assignment_date
-                                })
-                                
-                                if closed_date:
-                                    member_stats[assignee.login]["closed_issues"] += 1
-                                    closed_issues[assignee.login].append({
-                                        'repo': repo.name,
-                                        'number': issue.number,
-                                        'title': issue.title,
-                                        'closed_date': closed_date
-                                    })
-                                    member_stats[assignee.login]["closed_issues"] += 1
-            except Exception as e:
-                print(f"Error getting issues for {repo.name}: {e}")
-                continue
+                print(f"Error collecting PR metrics for {repo.name}: {e}")
         
         # Build report with iteration information
         report = [
@@ -1127,16 +657,16 @@ async def github_report_api():
         
         # Summary section with proper markdown table
         report.append("\n# SUMMARY\n")
-        report.append("| User | Commits | Assigned Issues | Closed Issues |")
-        report.append("|------|---------|----------------|---------------|")
+        report.append("| User | Commits | Assigned Issues | Closed Issues | PRs Created | PRs Reviewed | PRs Merged | PRs Commented |")
+        report.append("|------|---------|----------------|---------------|-------------|--------------|------------|---------------|")
         for login, stats in member_stats.items():
-            report.append(f"| {login} | {stats['commits']} | {stats['assigned_issues']} | {stats['closed_issues']} |")
+            report.append(f"| {login} | {stats['commits']} | {stats['assigned_issues']} | {stats['closed_issues']} | {stats.get('pr_created', 0)} | {stats.get('pr_reviewed', 0)} | {stats.get('pr_merged', 0)} | {stats.get('pr_commented', 0)} |")
         
         # Detailed section for each member
         report.append("\n# DETAILED ACTIVITY\n")
         
         for login, stats in member_stats.items():
-            if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0:
+            if stats['commits'] > 0 or stats['assigned_issues'] > 0 or stats['closed_issues'] > 0 or stats.get('pr_created', 0) > 0 or stats.get('pr_reviewed', 0) > 0 or stats.get('pr_merged', 0) > 0 or stats.get('pr_commented', 0) > 0:
                 report.append(f"\n## User: {login}\n")
                 
                 # List commits
@@ -1159,6 +689,38 @@ async def github_report_api():
                     report.append("**Closed Issues:**\n")
                     for issue_info in closed_issues.get(login, []):
                         report.append(f"- [{issue_info['repo']}] #{issue_info['number']} {issue_info['title']} (Closed on {issue_info['closed_date'].strftime('%Y-%m-%d')})")
+                    report.append("")  # Empty line
+                
+                # List PRs created
+                if stats.get('pr_created', 0) > 0:
+                    report.append("**Pull Requests Created:**\n")
+                    for pr_info in pr_created.get(login, []):
+                        status = "Merged" if pr_info.get('merged_at') else ("Closed" if pr_info['state'] == "closed" else "Open")
+                        report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} ({status})")
+                    report.append("")  # Empty line
+                
+                # List PRs reviewed
+                if stats.get('pr_reviewed', 0) > 0:
+                    report.append("**Pull Requests Reviewed:**\n")
+                    for pr_info in pr_reviewed.get(login, []):
+                        status = "Merged" if pr_info.get('merged_at') else ("Closed" if pr_info['state'] == "closed" else "Open")
+                        report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} ({status})")
+                    report.append("")  # Empty line
+                
+                # List PRs merged
+                if stats.get('pr_merged', 0) > 0:
+                    report.append("**Pull Requests Merged:**\n")
+                    for pr_info in pr_merged.get(login, []):
+                        merged_date = pr_info.get('merged_at').strftime('%Y-%m-%d') if pr_info.get('merged_at') else 'N/A'
+                        report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} (Merged on {merged_date})")
+                    report.append("")  # Empty line
+                
+                # List PRs commented
+                if stats.get('pr_commented', 0) > 0:
+                    report.append("**Pull Requests Commented:**\n")
+                    for pr_info in pr_commented.get(login, []):
+                        status = "Merged" if pr_info.get('merged_at') else ("Closed" if pr_info['state'] == "closed" else "Open")
+                        report.append(f"- [{pr_info['repo']}] #{pr_info['number']} {pr_info['title']} ({status})")
                     report.append("")  # Empty line
         
         # Add report completion time
