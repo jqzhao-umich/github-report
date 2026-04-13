@@ -69,10 +69,13 @@ def collect_commit_metrics(
                 print(f"Processing branch {branch.name} in {repo.name}")
                 
                 # Use since/until parameters to limit GitHub API queries
-                since = iteration_start if iteration_start else None
-                until = iteration_end if iteration_end else None
-                
-                for commit in repo.get_commits(sha=branch.name, since=since, until=until):
+                commit_kwargs = {"sha": branch.name}
+                if iteration_start:
+                    commit_kwargs["since"] = iteration_start
+                if iteration_end:
+                    commit_kwargs["until"] = iteration_end
+
+                for commit in repo.get_commits(**commit_kwargs):
                     # Skip if we've already processed this commit from another branch
                     if commit.sha in processed_commits:
                         continue
@@ -113,30 +116,63 @@ def collect_commit_metrics(
                     matched_login = None
                     
                     # First try: GitHub API author (most reliable)
-                    if commit.author and hasattr(commit.author, 'login'):
-                        login = commit.author.login
-                        
-                        # Skip excluded user
-                        if exclude_user_login and login == exclude_user_login:
-                            continue
-                        
-                        if login in member_stats:
-                            matched_login = login
-                            print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
+                    try:
+                        if commit.author and commit.author.login:
+                            login = commit.author.login
+
+                            # Skip excluded user
+                            if exclude_user_login and login == exclude_user_login:
+                                continue
+
+                            if login in member_stats:
+                                matched_login = login
+                                print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
+                    except Exception:
+                        # Some commits have incomplete author objects that can't be resolved
+                        pass
                     
                     # Second try: Email matching (for commits without GitHub author)
                     if not matched_login and commit.commit.author and commit.commit.author.email:
                         email = commit.commit.author.email.lower()
-                        
+
                         if email in email_to_login:
                             matched_login = email_to_login[email]
-                            
+
                             # Skip excluded user
                             if exclude_user_login and matched_login == exclude_user_login:
                                 continue
-                            
+
                             print(f"Matched commit {commit.sha[:7]} on {branch.name} to {matched_login} via email")
-                    
+
+                    # Third try: Match email local part or git author name against member logins
+                    # Handles cases like:
+                    #   eylinaf@hostname.local -> EylinaF (email local part)
+                    #   "Weiguo Xia" with wgx@umich.edu -> weiguoxia (name without spaces)
+                    if not matched_login and commit.commit.author:
+                        candidates = set()
+                        if commit.commit.author.email:
+                            email = commit.commit.author.email.lower()
+                            local_part = email.split('@')[0].lower()
+                            candidates.add(local_part)
+                            # Strip common noreply prefixes like "12345+"
+                            if '+' in local_part:
+                                candidates.add(local_part.split('+')[-1])
+                        if commit.commit.author.name:
+                            # "Weiguo Xia" -> "weiguoxia"
+                            candidates.add(commit.commit.author.name.replace(' ', '').lower())
+
+                        for member_login in member_stats:
+                            if member_login.lower() in candidates:
+                                matched_login = member_login
+
+                                # Skip excluded user
+                                if exclude_user_login and matched_login == exclude_user_login:
+                                    matched_login = None
+                                    continue
+
+                                print(f"Matched commit {commit.sha[:7]} on {branch.name} to {matched_login} via local part/name")
+                                break
+
                     # Update statistics if we found a match
                     if matched_login:
                         member_stats[matched_login]["commits"] += 1

@@ -48,7 +48,7 @@ def collect_members_and_emails(
         member_logins = ['alice', 'bob', 'carol']
     """
     org = github.get_organization(org_name)
-    members = list(org.get_members(filter_="all"))
+    members = list(org.get_members())
     print(f"Found {len(members)} members")
     
     member_stats = {}
