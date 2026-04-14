@@ -9,6 +9,8 @@ Used by both standalone functions and MCP agents.
 from datetime import datetime, timezone
 from typing import Dict, Optional, Set
 
+from github.GithubException import IncompletableObject
+
 
 def collect_commit_metrics(
     repo,
@@ -20,7 +22,7 @@ def collect_commit_metrics(
 ) -> int:
     """
     Collect commit metrics from all branches in a repository.
-    
+
     Args:
         repo: PyGithub Repository object
         member_stats: Dict tracking member statistics (updated in-place)
@@ -28,10 +30,10 @@ def collect_commit_metrics(
         commit_details: Dict storing commit details per member (updated in-place)
         iteration_info: Optional dict with start_date/end_date for filtering
         exclude_user_login: Optional username to exclude from counting
-        
+
     Returns:
         Total number of commits processed in this repo
-        
+
     Side Effects:
         - Updates member_stats[login]['commits'] counters
         - Appends commit info dicts to commit_details[login]
@@ -39,7 +41,7 @@ def collect_commit_metrics(
     # Parse iteration dates if provided
     iteration_start = None
     iteration_end = None
-    
+
     if iteration_info and iteration_info.get('start_date') and iteration_info.get('end_date'):
         try:
             iteration_start = datetime.fromisoformat(
@@ -48,27 +50,28 @@ def collect_commit_metrics(
             iteration_end = datetime.fromisoformat(
                 iteration_info['end_date'].replace('Z', '+00:00')
             )
-            
-            # Ensure timezone-aware
+
             if iteration_start.tzinfo is None:
                 iteration_start = iteration_start.replace(tzinfo=timezone.utc)
             if iteration_end.tzinfo is None:
                 iteration_end = iteration_end.replace(tzinfo=timezone.utc)
-                
+
         except Exception as e:
             print(f"Error parsing iteration dates: {e}")
-    
+
     total_commits_processed = 0
-    processed_commits: Set[str] = set()  # Track unique commits across branches
-    
+    processed_commits: Set[str] = set()
+    # Pre-compute lowered login lookup to avoid per-commit .lower() calls
+    login_lower_to_login = {login.lower(): login for login in member_stats}
+
     try:
         branches = repo.get_branches()
-        
+
         for branch in branches:
             try:
                 print(f"Processing branch {branch.name} in {repo.name}")
-                
-                # Use since/until parameters to limit GitHub API queries
+
+                # PyGithub asserts since/until are datetime, not None — only pass when set
                 commit_kwargs = {"sha": branch.name}
                 if iteration_start:
                     commit_kwargs["since"] = iteration_start
@@ -76,105 +79,78 @@ def collect_commit_metrics(
                     commit_kwargs["until"] = iteration_end
 
                 for commit in repo.get_commits(**commit_kwargs):
-                    # Skip if we've already processed this commit from another branch
                     if commit.sha in processed_commits:
                         continue
                     processed_commits.add(commit.sha)
                     total_commits_processed += 1
-                    
+
                     # Additional date filtering (GitHub API may return commits outside range)
                     if iteration_start and iteration_end:
                         try:
                             commit_date = commit.commit.author.date
-                            
-                            # Make commit_date timezone-aware if it isn't
+
                             if commit_date.tzinfo is None:
                                 commit_date = commit_date.replace(tzinfo=timezone.utc)
-                            
-                            # Skip commits outside iteration range
+
                             if not (iteration_start <= commit_date <= iteration_end):
                                 continue
                             else:
                                 print(f"Found commit in iteration: {commit.commit.message[:50]}... "
                                       f"by {commit.author.login if commit.author else 'Unknown'} "
                                       f"on branch {branch.name}")
-                                      
+
                         except AttributeError:
-                            # Skip commits with invalid author data
                             continue
-                    
-                    # Build commit info structure
+
                     commit_info = {
                         'repo': repo.name,
-                        'message': commit.commit.message.split('\n')[0],  # First line only
+                        'message': commit.commit.message.split('\n')[0],
                         'date': commit.commit.author.date,
                         'sha': commit.sha[:7],
                         'branch': branch.name
                     }
-                    
-                    # Try to match commit to a member
+
                     matched_login = None
-                    
+
                     # First try: GitHub API author (most reliable)
                     try:
                         if commit.author and commit.author.login:
                             login = commit.author.login
-
-                            # Skip excluded user
-                            if exclude_user_login and login == exclude_user_login:
-                                continue
-
                             if login in member_stats:
                                 matched_login = login
                                 print(f"Matched commit {commit.sha[:7]} on {branch.name} to {login} via GitHub API")
-                    except Exception:
-                        # Some commits have incomplete author objects that can't be resolved
+                    except (IncompletableObject, AttributeError):
                         pass
-                    
+
                     # Second try: Email matching (for commits without GitHub author)
                     if not matched_login and commit.commit.author and commit.commit.author.email:
                         email = commit.commit.author.email.lower()
-
                         if email in email_to_login:
                             matched_login = email_to_login[email]
-
-                            # Skip excluded user
-                            if exclude_user_login and matched_login == exclude_user_login:
-                                continue
-
                             print(f"Matched commit {commit.sha[:7]} on {branch.name} to {matched_login} via email")
 
-                    # Third try: Match email local part or git author name against member logins
-                    # Handles cases like:
-                    #   eylinaf@hostname.local -> EylinaF (email local part)
-                    #   "Weiguo Xia" with wgx@umich.edu -> weiguoxia (name without spaces)
+                    # Third try: match email local part or git author name against member logins
+                    # (handles unlinked accounts like eylinaf@hostname.local or "Weiguo Xia")
                     if not matched_login and commit.commit.author:
                         candidates = set()
                         if commit.commit.author.email:
-                            email = commit.commit.author.email.lower()
-                            local_part = email.split('@')[0].lower()
+                            local_part = commit.commit.author.email.lower().split('@')[0]
                             candidates.add(local_part)
-                            # Strip common noreply prefixes like "12345+"
                             if '+' in local_part:
                                 candidates.add(local_part.split('+')[-1])
                         if commit.commit.author.name:
-                            # "Weiguo Xia" -> "weiguoxia"
                             candidates.add(commit.commit.author.name.replace(' ', '').lower())
 
-                        for member_login in member_stats:
-                            if member_login.lower() in candidates:
-                                matched_login = member_login
-
-                                # Skip excluded user
-                                if exclude_user_login and matched_login == exclude_user_login:
-                                    matched_login = None
-                                    continue
-
+                        for candidate in candidates:
+                            if candidate in login_lower_to_login:
+                                matched_login = login_lower_to_login[candidate]
                                 print(f"Matched commit {commit.sha[:7]} on {branch.name} to {matched_login} via local part/name")
                                 break
 
-                    # Update statistics if we found a match
+                    # Skip excluded user, update statistics
                     if matched_login:
+                        if exclude_user_login and matched_login == exclude_user_login:
+                            continue
                         member_stats[matched_login]["commits"] += 1
                         commit_details[matched_login].append(commit_info)
                         
