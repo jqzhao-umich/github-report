@@ -142,5 +142,14 @@
     "iteration_name": "Iteration 82",
     "start_date": "2026-06-01",
     "end_date": "2026-06-15T00:00:00"
+  },
+  {
+    "date": "2026-06-28T04:30:31.869656-04:00",
+    "title": "Report for WeMoAD-umich - Iteration 83",
+    "path": "2026-06-28_04-30-AM_WeMoAD-umich_iteration-83.html",
+    "org_name": "WeMoAD-umich",
+    "iteration_name": "Iteration 83",
+    "start_date": "2026-06-15",
+    "end_date": "2026-06-29T00:00:00"
   }
 ]
