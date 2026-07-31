@@ -23,7 +23,9 @@ from datetime import datetime, timezone, timedelta
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
 
-# Set up logging
+# Set up logging. Create logs/ if it doesn't already exist so the FileHandler
+# doesn't crash at import time on a fresh checkout (CI runners, canary jobs).
+os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -43,19 +45,6 @@ from ..utils.iteration_info import get_current_iteration_info
 from ..utils.github_members import collect_members_and_emails, initialize_detail_structures
 from ..utils.commit_metrics import collect_commit_metrics
 from ..utils.issue_metrics import collect_issue_metrics
-
-import logging
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/github.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger('github-agent')
 
 def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
     """
