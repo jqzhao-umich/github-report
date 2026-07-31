@@ -19,11 +19,13 @@ Architecture: Sits at the top of the agent hierarchy, coordinating workflows.
 """
 
 import mcp.types as types
-from mcp.server import Server, NotificationOptions
-from mcp.server.models import InitializationOptions
+from mcp.server import Server, NotificationOptions, InitializationOptions
 import os
 import asyncio
 from typing import Dict, List, Optional
+
+from . import _peer_client
+
 
 class AgentCommunicationError(Exception):
     """Raised when communication with an agent fails"""
@@ -35,9 +37,7 @@ class AgentNotAvailableError(Exception):
 
 REQUIRED_AGENTS = ["core-agent", "github-agent", "web-interface-agent"]
 
-server = Server("main-coordinator")
 
-@server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
@@ -53,14 +53,13 @@ async def handle_list_tools() -> list[types.Tool]:
         )
     ]
 
-@server.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     # Check for unknown tools first
     if name != "get-github-report":
         raise ValueError(f"Unknown tool: {name}")
-    
+
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -68,61 +67,68 @@ async def handle_call_tool(
         org_name = arguments.get("org_name")
         if not org_name:
             raise ValueError("Missing org_name")
-        
+
         # Get iteration info from GitHub agent
         try:
-            iteration_info = await server.request_context.session.call_tool(
+            iteration_info_text = await _peer_client.call_peer_tool(
                 "github-agent",
                 "get-iteration-info",
-                {"org_name": org_name}
+                {"org_name": org_name},
             )
-        except (LookupError, AttributeError) as e:
+        except (LookupError, AttributeError, NotImplementedError) as e:
             raise AgentCommunicationError(f"Failed to communicate with github-agent: {e}")
-        
+
         # Get GitHub data
         try:
-            github_data = await server.request_context.session.call_tool(
+            github_data_text = await _peer_client.call_peer_tool(
                 "github-agent",
                 "get-github-data",
-                {
-                    "org_name": org_name,
-                    "iteration_info": iteration_info[0].text if iteration_info else None
-                }
+                {"org_name": org_name, "iteration_info": iteration_info_text},
             )
-        except (LookupError, AttributeError) as e:
+        except (LookupError, AttributeError, NotImplementedError) as e:
             raise AgentCommunicationError(f"Failed to communicate with github-agent: {e}")
-        
+
         # Generate report using web interface agent
         try:
-            report = await server.request_context.session.call_tool(
+            report_text = await _peer_client.call_peer_tool(
                 "web-interface-agent",
                 "generate-report",
                 {
                     "org_name": org_name,
-                    "iteration_info": iteration_info[0].text if iteration_info else None,
-                    "github_data": github_data[0].text if github_data else None
-                }
+                    "iteration_info": iteration_info_text,
+                    "github_data": github_data_text,
+                },
             )
-        except (LookupError, AttributeError) as e:
+        except (LookupError, AttributeError, NotImplementedError) as e:
             raise AgentCommunicationError(f"Failed to communicate with web-interface-agent: {e}")
-        
-        # Safely extract report text, ensuring it's a string
-        try:
-            report_text = "No report generated"
-            if report and len(report) > 0:
-                report_content = report[0].text if hasattr(report[0], 'text') else str(report[0])
-                # Ensure it's actually a string (not a Mock or other object)
-                if isinstance(report_content, str):
-                    report_text = report_content
-                else:
-                    report_text = str(report_content)
-            return [types.TextContent(type="text", text=report_text)]
-        except (AttributeError, TypeError, ValueError) as e:
-            raise AgentCommunicationError(f"Failed to extract report content: {e}")
+
+        if not isinstance(report_text, str):
+            report_text = str(report_text) if report_text is not None else "No report generated"
+        return [types.TextContent(type="text", text=report_text)]
+
+
+# --- mcp 2.0 handler adapters -----------------------------------------------
+
+async def _on_list_tools(ctx, params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(ctx, params):
+    content = await handle_call_tool(params.name, params.arguments)
+    return types.CallToolResult(content=content or [])
+
+
+server = Server(
+    "main-coordinator",
+    version="0.1.0",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
+
 
 async def main():
     from mcp.server.stdio import stdio_server
-    
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

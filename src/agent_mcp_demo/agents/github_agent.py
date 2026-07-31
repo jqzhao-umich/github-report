@@ -57,8 +57,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger('github-agent')
 
-server = Server("github-agent")
-
 def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
     """
     Get current iteration information from GitHub Projects using GraphQL API
@@ -206,7 +204,6 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
         print(f"Error getting iteration info from GitHub Projects: {e}")
     return None
 
-@server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
@@ -257,7 +254,6 @@ class GitHubAccessError(GitHubError):
     """GitHub resource access error"""
     pass
 
-@server.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
@@ -416,9 +412,29 @@ async def handle_call_tool(
             })
         )]
 
+
+# --- mcp 2.0 handler adapters -----------------------------------------------
+
+async def _on_list_tools(ctx, params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(ctx, params):
+    content = await handle_call_tool(params.name, params.arguments)
+    return types.CallToolResult(content=content or [])
+
+
+server = Server(
+    "github-agent",
+    version="0.1.0",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
+
+
 async def main():
     from mcp.server.stdio import stdio_server
-    
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

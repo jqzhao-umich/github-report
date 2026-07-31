@@ -7,27 +7,60 @@ from datetime import datetime
 import json
 
 from agent_mcp_demo.agents.web_interface_agent import app, server
-from mcp.types import TextContent, ImageContent, EmbeddedResource
+from agent_mcp_demo.agents import _peer_client
+from mcp.types import TextContent
 
-from mcp.server.lowlevel.server import request_ctx, RequestContext
 
+# Simple stand-ins for the removed mcp.server.lowlevel.server.request_ctx /
+# RequestContext. Tests below patch _peer_client.call_peer_tool, which is the
+# 2.0 replacement for the ambient MCP context seam.
+class _ProxySession:
+    """Mock session that records call_tool invocations and yields text results."""
+
+    def __init__(self):
+        self.call_tool = AsyncMock()
 
 
 def create_mock_server_context():
-    """Create a mock MCP server context."""
-    mock_session = AsyncMock()
-    mock_context = RequestContext(
-        session=mock_session,
-        request_id="test-request",
-        meta={},
-        lifespan_context=None,
-    )
+    mock_session = _ProxySession()
+    mock_context = MagicMock(session=mock_session, request_id="test-request", meta={}, lifespan_context=None)
     return mock_context, mock_session
 
-# Create test client with MCP context
-mock_context, mock_session = create_mock_server_context()
-token = request_ctx.set(mock_context)
+
 client = TestClient(app)
+
+
+def _extract_text_from_side_effect_item(item):
+    """The old tests pushed side_effect entries shaped [TextContent(text=...)].
+    The new peer_client returns raw text strings, so unwrap the TextContent
+    lists here to keep tests readable."""
+    if isinstance(item, list) and item and hasattr(item[0], "text"):
+        return item[0].text
+    if hasattr(item, "text"):
+        return item.text
+    return item
+
+
+def _install_peer_side_effect(mock_session):
+    """Bridge the old-shape side_effect list on mock_session.call_tool to the
+    new _peer_client.call_peer_tool contract (returns a text string)."""
+
+    async def _call_peer_tool(agent_name, tool_name, arguments=None):
+        entries = mock_session.call_tool.side_effect
+        if entries is None:
+            raise NotImplementedError("no side_effect configured")
+        if not isinstance(entries, list):
+            entries = list(entries)
+        try:
+            entry = entries.pop(0)
+        except IndexError as e:
+            raise StopAsyncIteration from e
+        mock_session.call_tool.side_effect = entries
+        # keep the historical call-count assertions working
+        mock_session.call_tool.call_count = getattr(mock_session.call_tool, "call_count", 0) + 1
+        return _extract_text_from_side_effect_item(entry)
+
+    return _call_peer_tool
 
 def create_mock_github_data():
     """Create mock GitHub data for testing."""
@@ -159,13 +192,9 @@ def mock_env_vars():
 
 @pytest.fixture
 def mock_server_context():
-    """Setup mock MCP server context with session."""
-    # Create new context for each test
+    """Setup mock peer-agent RPC surface used by web_interface_agent."""
     mock_context, mock_session = create_mock_server_context()
-    token = request_ctx.set(mock_context)
-    
-    # Configure default responses
-    mock_session.call_tool = AsyncMock()
+
     mock_session.call_tool.side_effect = [
         [TextContent(type="text", text=str({
             'name': 'Sprint 1',
@@ -174,9 +203,13 @@ def mock_server_context():
         }))],
         [TextContent(type="text", text=str(create_mock_github_data()))]
     ]
-    
-    yield mock_session
-    request_ctx.reset(token)
+
+    patcher = patch.object(_peer_client, "call_peer_tool", _install_peer_side_effect(mock_session))
+    patcher.start()
+    try:
+        yield mock_session
+    finally:
+        patcher.stop()
 
 @pytest.fixture
 def mock_publisher():
@@ -463,32 +496,23 @@ async def test_publish_report_invalid_data(mock_env_vars, mock_server_context):
     assert "Failed to parse GitHub data" in data["error"]
 
 @pytest.mark.asyncio
-async def test_missing_mcp_context():
-    """Test behavior when MCP context is missing."""
-    from mcp.server.lowlevel.server import request_ctx
+async def test_missing_mcp_context(mock_env_vars):
+    """Test behavior when the peer-agent RPC path is unavailable.
+
+    In mcp 2.0 the ambient request_ctx ContextVar is gone; the runtime seam is
+    now agent_mcp_demo.agents._peer_client.call_peer_tool. When that raises
+    NotImplementedError (its default), the endpoints surface the same
+    "MCP server context not available" error the old low-level ContextVar did.
+    """
     from fastapi.testclient import TestClient
     from agent_mcp_demo.agents.web_interface_agent import app
-    
-    # Create a test client
+
     test_client = TestClient(app)
-    
-    # Test with no context
-    try:
-        token = request_ctx.set(None)
+
+    async def _unavailable(*args, **kwargs):
+        raise NotImplementedError("peer agent not wired")
+
+    with patch.object(_peer_client, "call_peer_tool", _unavailable):
         response = test_client.post("/api/reports/publish")
         assert response.status_code == 500
         assert "MCP server context not available" in response.json()["error"]
-    finally:
-        request_ctx.reset(token)
-        
-    # Test with empty context
-    class MockContext:
-        session = None
-        
-    try:
-        token = request_ctx.set(MockContext())
-        response = test_client.post("/api/reports/publish")
-        assert response.status_code == 500
-        assert "MCP server context not available" in response.json()["error"]
-    finally:
-        request_ctx.reset(token)
