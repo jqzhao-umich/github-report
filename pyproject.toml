@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn>=0.15.0",
     "httpx>=0.24.1",
     "pydantic>=1.10.12",
+    "pydantic-settings>=2.0",
     "PyYAML>=6.0",
     "APScheduler>=3.10.0",
     "GitPython>=3.1.0"
