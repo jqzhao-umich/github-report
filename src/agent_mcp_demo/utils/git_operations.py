@@ -40,8 +40,11 @@ class GitOperations:
             }
         
         try:
-            # Check if there are any changes
-            if not self.repo.is_dirty(path=file_paths) and not self.repo.untracked_files:
+            # Check if there are any changes. GitPython's is_dirty(path=...) only
+            # accepts a single PathLike, not a list, so we check the repo as a whole
+            # and rely on the post-staging index diff below to catch the case where
+            # nothing in file_paths actually changed.
+            if not self.repo.is_dirty() and not self.repo.untracked_files:
                 return {
                     "status": "skipped",
                     "message": "No changes to commit"
