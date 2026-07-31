@@ -76,8 +76,12 @@ jobs:
           EOF
 
       - name: Run the pytest suite
+        # Install from requirements.txt so we get the exact pytest / pytest-asyncio
+        # versions the suite was written against. `pip install pytest ...` bare
+        # pulls latest, which breaks asyncio test discovery (pytest-asyncio 1.x
+        # requires @pytest.mark.asyncio; 0.21 discovers async tests by default).
         run: |
-          pip install pytest pytest-asyncio pytest-cov pytest-env pytest-mock aioresponses responses
+          pip install -r requirements.txt
           pytest -q --no-cov
 
       - name: Dry-run report generation (no commit, no publish)
