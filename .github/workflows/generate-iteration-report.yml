@@ -269,7 +269,7 @@ jobs:
         # `if: always()` so a failure late in generation still surfaces
         # whatever partial output landed on disk.
         if: always() && inputs.dry_run == true && steps.check_date.outputs.should_generate == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iteration-report-dryrun-${{ steps.check_date.outputs.iteration_name || 'unknown' }}-${{ github.run_number }}
           path: |
@@ -377,7 +377,7 @@ jobs:
 
       - name: Upload canary artifact
         if: always() && hashFiles('mcp2-report.md') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcp2-daily-canary-${{ github.run_number }}
           path: mcp2-report.md
