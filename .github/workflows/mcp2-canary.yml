@@ -1,0 +1,159 @@
+name: mcp2 canary (dry run)
+
+# Runs the mcp 2.0 port through the same install + import + report-generation
+# path the production workflow uses, but WITHOUT committing, pushing, or
+# publishing anything. Purpose: give the mcp2 branch a live signal so a
+# regression is caught before merge.
+#
+# Triggers:
+#   - Every push to the mcp2 branch (immediate feedback per commit).
+#   - Manual dispatch (workflow_dispatch) — pick the branch in the UI.
+#
+# Note on scheduling: GitHub's `schedule:` cron only fires from the repo's
+# default branch. So we cannot put a daily schedule on this workflow here on
+# mcp2. Daily exercise is provided by the `mcp2-canary` job that was added
+# to `.github/workflows/generate-iteration-report.yml` on main, which runs
+# in parallel with the production job on the same cron.
+
+on:
+  push:
+    branches:
+      - mcp2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mcp2
+        uses: actions/checkout@v5
+        with:
+          # Whatever ref triggered this — for push events that's the mcp2 tip,
+          # for workflow_dispatch it's the branch selected in the UI.
+          ref: ${{ github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (mcp 2.0)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyyaml
+          # Belt and suspenders: assert we actually resolved mcp>=2.0.
+          python -c "import mcp, sys; v = getattr(mcp, '__version__', None); print('mcp resolved to:', v); \
+            import importlib.metadata as m; print('mcp dist version:', m.version('mcp'))"
+
+      - name: Import smoke test
+        # This is the exact failure mode the pin fix + port were addressing:
+        # AttributeError on module load. If this step is green, the port's
+        # basic compatibility with mcp 2.0 holds.
+        run: |
+          python - << 'EOF'
+          from agent_mcp_demo.server import (
+              github_report_api,
+              get_current_iteration_info,
+              app,
+              server,
+          )
+          from agent_mcp_demo.agents import (
+              core_agent,
+              github_agent,
+              main_coordinator,
+              web_interface_agent,
+          )
+          print("[ok] all mcp2 modules import cleanly")
+          print("  main coordinator server:", server.name)
+          print("  core-agent server:", core_agent.server.name)
+          print("  github-agent server:", github_agent.server.name)
+          print("  main-coordinator server:", main_coordinator.server.name)
+          print("  web-interface-agent server:", web_interface_agent.server.name)
+          EOF
+
+      - name: Run the pytest suite
+        # Install from requirements.txt so we get the exact pytest / pytest-asyncio
+        # versions the suite was written against. `pip install pytest ...` bare
+        # pulls latest, which breaks asyncio test discovery (pytest-asyncio 1.x
+        # requires @pytest.mark.asyncio; 0.21 discovers async tests by default).
+        run: |
+          pip install -r requirements.txt
+          pytest -q --no-cov
+
+      - name: Dry-run report generation (no commit, no publish)
+        id: dryrun
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          GITHUB_ORG_NAME: ${{ secrets.ORG_NAME || secrets.GITHUB_ORG_NAME || 'WeMoAD-umich' }}
+        run: |
+          python - << 'EOF'
+          import asyncio, os, sys
+          from agent_mcp_demo.server import github_report_api
+
+          print("[canary] invoking github_report_api()")
+          report = asyncio.run(github_report_api())
+          if not isinstance(report, str):
+              # FastAPI JSONResponse or similar — the standalone caller expects text
+              print(f"[canary] unexpected return type: {type(report).__name__}", file=sys.stderr)
+              sys.exit(2)
+
+          # Surface early-return sentinels so a broken token or org shows up as
+          # a canary failure rather than a "success with empty report".
+          error_prefixes = (
+              "GitHub token not set",
+              "GitHub organization name not set",
+              "GitHub authentication failed",
+              "Error accessing organization",
+              "Unexpected error:",
+          )
+          if report.startswith(error_prefixes):
+              print(f"[canary] report_api returned an error string: {report[:200]}", file=sys.stderr)
+              sys.exit(3)
+
+          with open("mcp2-report.md", "w") as f:
+              f.write(report)
+
+          # Emit a compact summary so the job page shows the shape of the run
+          # without needing to download the artifact.
+          n_lines = report.count("\n") + 1
+          n_bytes = len(report.encode("utf-8"))
+          summary_head = "\n".join(report.splitlines()[:20])
+          print(f"[canary] report_bytes={n_bytes} report_lines={n_lines}")
+          print("[canary] --- first 20 lines ---")
+          print(summary_head)
+          print("[canary] --- end preview ---")
+
+          # Also write a machine-readable summary for the workflow summary panel.
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as sm:
+              sm.write(f"### mcp2 canary — dry-run report\n\n")
+              sm.write(f"- bytes: **{n_bytes}**\n")
+              sm.write(f"- lines: **{n_lines}**\n\n")
+              sm.write("<details><summary>First 20 lines</summary>\n\n```\n")
+              sm.write(summary_head)
+              sm.write("\n```\n\n</details>\n")
+          EOF
+
+      - name: Upload canary artifact
+        # `if: always()` so a partial report is still fetchable even if a later
+        # sanity check fails. Retention 30d fits the "test for a couple of
+        # weeks" plan.
+        if: always() && hashFiles('mcp2-report.md') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: mcp2-canary-report-${{ github.run_number }}
+          path: mcp2-report.md
+          retention-days: 30
+
+      - name: Sanity-check report shape
+        # Cheap structural asserts. Not a substitute for a diff against main,
+        # but catches the "runs and produces empty/degenerate output" case.
+        run: |
+          test -s mcp2-report.md
+          grep -q '^GitHub Organization: ' mcp2-report.md
+          grep -q 'Total commits processed:' mcp2-report.md
+          grep -q '^# SUMMARY' mcp2-report.md
+          echo "[canary] structural checks passed"

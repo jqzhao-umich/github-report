@@ -54,8 +54,8 @@ class TestGitHubAgentTools:
         tools = await handle_list_tools()
         github_data_tool = next(t for t in tools if t.name == "get-github-data")
         
-        assert "org_name" in github_data_tool.inputSchema["properties"]
-        assert github_data_tool.inputSchema["required"] == ["org_name"]
+        assert "org_name" in github_data_tool.input_schema["properties"]
+        assert github_data_tool.input_schema["required"] == ["org_name"]
     
     @pytest.mark.asyncio
     async def test_get_iteration_info_tool_schema(self):
@@ -63,8 +63,8 @@ class TestGitHubAgentTools:
         tools = await handle_list_tools()
         iteration_tool = next(t for t in tools if t.name == "get-iteration-info")
         
-        assert "org_name" in iteration_tool.inputSchema["properties"]
-        assert iteration_tool.inputSchema["required"] == ["org_name"]
+        assert "org_name" in iteration_tool.input_schema["properties"]
+        assert iteration_tool.input_schema["required"] == ["org_name"]
 
 class TestIterationInfo:
     """Tests for iteration info retrieval"""

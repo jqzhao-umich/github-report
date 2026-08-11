@@ -43,8 +43,8 @@ class TestMainCoordinatorTools:
         tools = await handle_list_tools()
         report_tool = next(t for t in tools if t.name == "get-github-report")
         
-        assert "org_name" in report_tool.inputSchema["properties"]
-        assert report_tool.inputSchema["required"] == ["org_name"]
+        assert "org_name" in report_tool.input_schema["properties"]
+        assert report_tool.input_schema["required"] == ["org_name"]
 
 class TestMainCoordinatorConstants:
     """Tests for main coordinator constants"""

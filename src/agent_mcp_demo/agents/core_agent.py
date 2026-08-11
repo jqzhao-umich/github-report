@@ -35,9 +35,6 @@ class InvalidURIError(Exception):
 # Store notes as a simple key-value dict to demonstrate state management
 notes: dict[str, str] = {}
 
-server = Server("core-agent")
-
-@server.list_resources()
 async def handle_list_resources() -> list[types.Resource]:
     """
     List available note resources.
@@ -45,7 +42,7 @@ async def handle_list_resources() -> list[types.Resource]:
     """
     return [
         types.Resource(
-            uri=AnyUrl(f"note://internal/{name}"),
+            uri=f"note://internal/{name}",
             name=f"Note: {name}",
             description=f"A simple note named {name}",
             mimeType="text/plain",
@@ -53,7 +50,6 @@ async def handle_list_resources() -> list[types.Resource]:
         for name in notes
     ]
 
-@server.read_resource()
 async def handle_read_resource(uri: AnyUrl) -> str:
     """
     Read a specific note's content by its URI.
@@ -70,7 +66,6 @@ async def handle_read_resource(uri: AnyUrl) -> str:
         return notes[name]
     raise ValueError("Note name is required")
 
-@server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
     """
     List available prompts.
@@ -90,7 +85,6 @@ async def handle_list_prompts() -> list[types.Prompt]:
         )
     ]
 
-@server.get_prompt()
 async def handle_get_prompt(
     name: str, arguments: dict[str, str] | None
 ) -> types.GetPromptResult:
@@ -121,7 +115,6 @@ async def handle_get_prompt(
         ],
     )
 
-@server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """
     List available tools.
@@ -142,9 +135,10 @@ async def handle_list_tools() -> list[types.Tool]:
         )
     ]
 
-@server.call_tool()
 async def handle_call_tool(
-    name: str, arguments: dict | None
+    name: str,
+    arguments: dict | None,
+    ctx=None,
 ) -> list[types.TextContent]:
     """
     Handle tool execution requests.
@@ -153,7 +147,7 @@ async def handle_call_tool(
     # Check tool name first before validating arguments
     if name not in ["add-note"]:
         raise ValueError(f"Unknown tool: {name}")
-    
+
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -163,7 +157,11 @@ async def handle_call_tool(
         if not note_name or not content:
             raise ValueError("Missing name or content")
         notes[note_name] = content
-        await server.request_context.session.send_resource_list_changed()
+        if ctx is not None:
+            try:
+                await ctx.session.send_resource_list_changed()
+            except (LookupError, AttributeError):
+                pass
         return [
             types.TextContent(
                 type="text",
@@ -173,11 +171,53 @@ async def handle_call_tool(
     else:
         raise ValueError(f"Unknown tool: {name}")
 
+
+# --- mcp 2.0 handler adapters -----------------------------------------------
+
+async def _on_list_resources(ctx, params):
+    return types.ListResourcesResult(resources=await handle_list_resources())
+
+
+async def _on_read_resource(ctx, params):
+    text = await handle_read_resource(params.uri)
+    return types.ReadResourceResult(
+        contents=[types.TextResourceContents(uri=str(params.uri), mimeType="text/plain", text=text)]
+    )
+
+
+async def _on_list_prompts(ctx, params):
+    return types.ListPromptsResult(prompts=await handle_list_prompts())
+
+
+async def _on_get_prompt(ctx, params):
+    return await handle_get_prompt(params.name, params.arguments)
+
+
+async def _on_list_tools(ctx, params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(ctx, params):
+    content = await handle_call_tool(params.name, params.arguments, ctx=ctx)
+    return types.CallToolResult(content=content or [])
+
+
+server = Server(
+    "core-agent",
+    version="0.1.0",
+    on_list_resources=_on_list_resources,
+    on_read_resource=_on_read_resource,
+    on_list_prompts=_on_list_prompts,
+    on_get_prompt=_on_get_prompt,
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
+
+
 async def main():
     from mcp.server.stdio import stdio_server
-    from mcp.server.models import InitializationOptions
-    from mcp.server import NotificationOptions
-    
+    from mcp.server import InitializationOptions, NotificationOptions
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

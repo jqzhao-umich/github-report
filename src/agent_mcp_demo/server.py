@@ -310,9 +310,6 @@ def get_current_iteration_info_deprecated(github_token: str, org_name: str, proj
     return get_current_iteration_info(github_token, org_name, project_name)
 
 
-server = Server("agent-mcp-demo")
-
-@server.list_resources()
 async def handle_list_resources() -> list[types.Resource]:
     """
     List available note resources.
@@ -320,7 +317,7 @@ async def handle_list_resources() -> list[types.Resource]:
     """
     return [
         types.Resource(
-            uri=AnyUrl(f"note://internal/{name}"),
+            uri=f"note://internal/{name}",
             name=f"Note: {name}",
             description=f"A simple note named {name}",
             mimeType="text/plain",
@@ -328,7 +325,6 @@ async def handle_list_resources() -> list[types.Resource]:
         for name in notes
     ]
 
-@server.read_resource()
 async def handle_read_resource(uri: AnyUrl) -> str:
     """
     Read a specific note's content by its URI.
@@ -345,7 +341,6 @@ async def handle_read_resource(uri: AnyUrl) -> str:
         return notes[name]
     raise ValueError(f"Invalid URI: missing note name")
 
-@server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
     """
     List available prompts.
@@ -365,7 +360,6 @@ async def handle_list_prompts() -> list[types.Prompt]:
         )
     ]
 
-@server.get_prompt()
 async def handle_get_prompt(
     name: str, arguments: dict[str, str] | None
 ) -> types.GetPromptResult:
@@ -396,7 +390,6 @@ async def handle_get_prompt(
         ],
     )
 
-@server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """
     List available tools.
@@ -439,9 +432,10 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
     ]
 
-@server.call_tool()
 async def handle_call_tool(
-    name: str, arguments: dict | None
+    name: str,
+    arguments: dict | None,
+    ctx: "ServerRequestContext | None" = None,
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """
     Handle tool execution requests.
@@ -451,7 +445,7 @@ async def handle_call_tool(
     valid_tools = ["add-note", "fetch-api-data", "read-json-file"]
     if name not in valid_tools:
         raise ValueError(f"Unknown tool: {name}")
-    
+
     if not arguments:
         raise ValueError("Missing arguments")
 
@@ -462,11 +456,11 @@ async def handle_call_tool(
             raise ValueError("Missing name or content")
         notes[note_name] = content
         # Only send notification if we're in an MCP request context
-        try:
-            await server.request_context.session.send_resource_list_changed()
-        except (LookupError, AttributeError):
-            # Not in an MCP request context (e.g., during testing)
-            pass
+        if ctx is not None:
+            try:
+                await ctx.session.send_resource_list_changed()
+            except (LookupError, AttributeError):
+                pass
         return [
             types.TextContent(
                 type="text",
@@ -495,6 +489,56 @@ async def handle_call_tool(
                 text=f"Read data from file {filepath}: {json.dumps(data)[:500]}",
             )
         ]
+
+
+# ---------------------------------------------------------------------------
+# mcp 2.0 handler adapters — the SDK now takes handlers as constructor kwargs
+# with signatures `(ctx, params) -> ResultType`. We keep the original
+# `handle_*(name, arguments)` functions above so tests and callers can invoke
+# them directly with plain Python values.
+# ---------------------------------------------------------------------------
+
+async def _on_list_resources(ctx, params):
+    return types.ListResourcesResult(resources=await handle_list_resources())
+
+
+async def _on_read_resource(ctx, params):
+    text = await handle_read_resource(params.uri)
+    uri_str = str(params.uri)
+    return types.ReadResourceResult(
+        contents=[types.TextResourceContents(uri=uri_str, mimeType="text/plain", text=text)]
+    )
+
+
+async def _on_list_prompts(ctx, params):
+    return types.ListPromptsResult(prompts=await handle_list_prompts())
+
+
+async def _on_get_prompt(ctx, params):
+    return await handle_get_prompt(params.name, params.arguments)
+
+
+async def _on_list_tools(ctx, params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(ctx, params):
+    content = await handle_call_tool(params.name, params.arguments, ctx=ctx)
+    return types.CallToolResult(content=content or [])
+
+
+from mcp.server import ServerRequestContext  # re-exported for the annotation above  # noqa: E402
+
+server = Server(
+    "agent-mcp-demo",
+    version="0.1.0",
+    on_list_resources=_on_list_resources,
+    on_read_resource=_on_read_resource,
+    on_list_prompts=_on_list_prompts,
+    on_get_prompt=_on_get_prompt,
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 @app.get("/api/github-report", response_class=PlainTextResponse)
 async def github_report_api():

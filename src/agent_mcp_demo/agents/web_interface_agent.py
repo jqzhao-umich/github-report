@@ -26,7 +26,9 @@ import json
 import os
 import logging
 from datetime import datetime, timezone, timedelta
-from mcp.server import Server, NotificationOptions
+from mcp.server import Server, NotificationOptions, InitializationOptions
+
+from . import _peer_client
 
 # Set up logging
 os.makedirs('logs', exist_ok=True)
@@ -39,7 +41,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger('web-interface-agent')
-from mcp.server.models import InitializationOptions
 from ..utils import get_detroit_timezone, get_env_var, format_datetime
 from ..utils.report_publisher import ReportPublisher
 import requests
@@ -64,7 +65,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-server = Server("web-interface-agent")
+server = Server("web-interface-agent", version="0.1.0")
 
 def get_github_username(token: str) -> str:
     """Fetch the GitHub username associated with the token."""
@@ -296,75 +297,50 @@ async def github_report_api():
     # Detect if we're in daylight saving time
     tz_name = "EDT" if time.localtime().tm_isdst else "EST"
     
-    # Get data from GitHub agent (only if MCP context is available)
+    # Get data from GitHub agent via the peer-agent RPC shim
     iteration_info = None
     github_data = None
-    
+
     try:
-        # First check if we can access the GitHub agent
-        if not hasattr(server, "request_context") or not server.request_context or not server.request_context.session:
-            return "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
-            
         logger.info("Calling GitHub agent for iteration info...")
-        iteration_info_result = await server.request_context.session.call_tool(
-            "github-agent", 
+        iteration_info_text = await _peer_client.call_peer_tool(
+            "github-agent",
             "get-iteration-info",
-            {"org_name": ORG_NAME}
+            {"org_name": ORG_NAME},
         )
-        
-        logger.info(f"Iteration info result: {iteration_info_result}")
-        if not iteration_info_result:
-            logger.warning("No iteration info returned from GitHub agent")
-        elif not isinstance(iteration_info_result, list):
-            logger.warning(f"Unexpected iteration info type: {type(iteration_info_result)}")
-        elif len(iteration_info_result) > 0:
+
+        logger.info(f"Iteration info result: {iteration_info_text}")
+        if iteration_info_text:
             try:
-                iteration_info = eval(iteration_info_result[0].text)
+                iteration_info = eval(iteration_info_text)
                 print(f"Found iteration info: {iteration_info}")
             except Exception as e:
                 print(f"Error parsing iteration info: {e}")
                 iteration_info = None
-        
+
         logger.info("Calling GitHub agent for organization data...")
-        github_data_result = await server.request_context.session.call_tool(
+        github_data_text = await _peer_client.call_peer_tool(
             "github-agent",
             "get-github-data",
-            {
-                "org_name": ORG_NAME,
-                "iteration_info": iteration_info
-            }
+            {"org_name": ORG_NAME, "iteration_info": iteration_info},
         )
-        
-        logger.info(f"GitHub data result: {github_data_result}")
-        if not github_data_result:
+
+        logger.info(f"GitHub data result: {github_data_text}")
+        if not github_data_text:
             raise ValueError("No response from GitHub agent")
-        if not isinstance(github_data_result, list):
-            raise ValueError(f"Unexpected response type from GitHub agent: {type(github_data_result)}")
-        if len(github_data_result) == 0:
-            raise ValueError("Empty response from GitHub agent")
-        if not hasattr(github_data_result[0], 'text'):
-            raise ValueError(f"Invalid response format from GitHub agent: {github_data_result[0]}")
-            
+
         # Try to parse the GitHub data and validate it
         try:
-            github_data = eval(github_data_result[0].text)
+            github_data = eval(github_data_text)
             if not isinstance(github_data, dict):
                 raise ValueError(f"GitHub data is not a dictionary: {type(github_data)}")
             if 'member_stats' not in github_data:
                 raise ValueError("GitHub data missing required 'member_stats' field")
         except Exception as e:
             logger.error(f"Failed to parse GitHub data: {e}")
-            logger.error(f"Raw data: {github_data_result[0].text}")
+            logger.error(f"Raw data: {github_data_text}")
             raise ValueError(f"Failed to parse GitHub data: {e}")
-            
-        try:
-            github_data = eval(github_data_result[0].text)
-            print(f"Parsed GitHub data successfully: {len(github_data.get('member_stats', {})) if github_data else 0} members found")
-        except Exception as e:
-            print(f"Error parsing GitHub data: {e}")
-            raise ValueError(f"Invalid data returned from GitHub agent: {e}")
-    except (LookupError, AttributeError):
-        # MCP context not available - return error message
+    except (LookupError, AttributeError, NotImplementedError):
         return "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
     
     # Generate report
@@ -486,23 +462,17 @@ async def publish_report(background_tasks: BackgroundTasks):
     The report will be generated and published asynchronously.
     """
     try:
-        from mcp.server.lowlevel.server import request_ctx
-        
-        # Check if MCP context is available
-        try:
-            ctx = request_ctx.get()
-            if not ctx or not ctx.session:
-                return JSONResponse({
-                    "error": "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
-                }, status_code=500)
-        except LookupError:
-            return JSONResponse({
-                "error": "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
-            }, status_code=500)
-
+        # Availability of the peer-agent RPC path is now determined at call time
+        # (see agent_mcp_demo.agents._peer_client). The old low-level request_ctx
+        # ambient ContextVar was removed in mcp 2.0.
         report_text = await github_report_api()
+        # github_report_api returns a JSONResponse for environment errors
+        if isinstance(report_text, JSONResponse):
+            return report_text
         logger.info(f"Got report text: {report_text[:200]}...")
-        
+
+        if isinstance(report_text, str) and report_text.startswith("MCP server context not available"):
+            return JSONResponse({"error": report_text}, status_code=500)
         if isinstance(report_text, str) and "error" in report_text.lower():
             return JSONResponse({"error": report_text}, status_code=500)
             

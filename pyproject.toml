@@ -5,7 +5,7 @@ description = "MCP server with two agents: one for API, one for JSON file"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "mcp>=1.12.2,<2.0",
+    "mcp>=2.0",
     "PyGithub>=2.3.0",
     "python-dotenv>=1.0.0",
     "fastapi>=0.104.0",
@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn>=0.15.0",
     "httpx>=0.24.1",
     "pydantic>=1.10.12",
+    "pydantic-settings>=2.0",
     "PyYAML>=6.0",
     "APScheduler>=3.10.0",
     "GitPython>=3.1.0"
