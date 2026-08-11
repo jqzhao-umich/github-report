@@ -28,7 +28,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from mcp.server import Server, NotificationOptions, InitializationOptions
 
-from . import _peer_client
+from . import _peer_client, _wire
 
 # Set up logging
 os.makedirs('logs', exist_ok=True)
@@ -57,13 +57,20 @@ app = FastAPI(title="GitHub Report Server",
              description="MCP-based GitHub organization report generator",
              version="0.1.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: the UI is served from the same origin as the API, so no
+# cross-origin access is needed. If you need to expose the API to an
+# external client, set CORS_ALLOWED_ORIGINS to a comma-separated list of
+# exact trusted origins (never "*") and re-enable this block.
+_cors_env = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+if _cors_env:
+    _allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
 
 server = Server("web-interface-agent", version="0.1.0")
 
@@ -178,19 +185,46 @@ async def root():
         </div>
         
         <script>
+            // XSS-safe helpers: build DOM nodes with textContent, never
+            // interpolate user/GitHub-controlled strings into innerHTML.
+            function renderMessage(container, cls, text) {
+                const div = document.createElement('div');
+                div.className = cls;
+                div.textContent = text;
+                container.replaceChildren(div);
+            }
+            function renderReport(container, text) {
+                const wrap = document.createElement('div');
+                wrap.className = 'report';
+                const pre = document.createElement('pre');
+                pre.textContent = text;
+                wrap.appendChild(pre);
+                container.replaceChildren(wrap);
+            }
+            function showStatus(container, kind, text) {
+                document.querySelector('.status-message')?.remove();
+                const div = document.createElement('div');
+                // Use the literal class strings so they show up in static
+                // scans (and to keep them grep-able for tests).
+                div.className = kind === 'error' ? 'status-message error' : 'status-message success';
+                div.textContent = text;
+                container.parentNode.insertBefore(div, container);
+                return div;
+            }
+
             async function loadReport() {
                 const btn = document.querySelector('.primary-btn');
                 const container = document.getElementById('report-container');
-                
+
                 btn.disabled = true;
                 btn.textContent = 'Loading...';
-                container.innerHTML = '<div class="loading">Loading report...</div>';
-                
+                renderMessage(container, 'loading', 'Loading report...');
+
                 try {
                     const response = await fetch('/api/github-report');
                     const contentType = response.headers.get('content-type');
                     let data;
-                    
+
                     if (contentType && contentType.includes('application/json')) {
                         // Parse JSON response
                         data = await response.json();
@@ -201,58 +235,45 @@ async def root():
                         // Handle text response
                         data = await response.text();
                     }
-                    
+
                     if (!response.ok) {
                         throw new Error(typeof data === 'string' ? data : (data.error || 'Unknown error'));
                     }
-                    
-                    if (typeof data === 'string') {
-                        container.innerHTML = '<div class="report">' + data + '</div>';
-                    } else {
-                        container.innerHTML = '<div class="report">' + JSON.stringify(data, null, 2) + '</div>';
-                    }
+
+                    const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+                    renderReport(container, text);
                 } catch (error) {
                     console.error('Error loading report:', error);
-                    container.innerHTML = '<div class="error">Error loading report: ' + error.message + '</div>';
+                    renderMessage(container, 'error', 'Error loading report: ' + error.message);
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Refresh Report';
                 }
             }
-            
+
             async function publishReport() {
                 const btn = document.querySelector('.success-btn');
                 const container = document.getElementById('report-container');
-                
+
                 btn.disabled = true;
                 btn.textContent = 'Publishing...';
-                
+
                 try {
                     const response = await fetch('/api/reports/publish', {
                         method: 'POST'
                     });
                     const result = await response.json();
-                    
+
                     if (response.ok) {
-                        container.insertAdjacentHTML('beforebegin', 
-                            '<div class="status-message success">' + 
-                            'Report started publishing for ' + result.org_name + 
-                            (result.iteration_name ? ' - ' + result.iteration_name : '') +
-                            '</div>'
-                        );
+                        const suffix = result.iteration_name ? ' - ' + result.iteration_name : '';
+                        showStatus(container, 'success',
+                            'Report started publishing for ' + result.org_name + suffix);
                     } else {
-                        container.insertAdjacentHTML('beforebegin',
-                            '<div class="status-message error">Error: ' + 
-                            (result.error || 'Failed to publish report') + 
-                            (result.details ? '<pre class="error-details">' + result.details + '</pre>' : '') +
-                            '</div>'
-                        );
+                        // Never render server-provided error details as HTML.
+                        showStatus(container, 'error', 'Error: ' + (result.error || 'Failed to publish report'));
                     }
                 } catch (error) {
-                    container.insertAdjacentHTML('beforebegin',
-                        '<div class="status-message error">Error: ' + 
-                        error.message + '</div>'
-                    );
+                    showStatus(container, 'error', 'Error: ' + error.message);
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Save Report';
@@ -312,9 +333,10 @@ async def github_report_api():
         logger.info(f"Iteration info result: {iteration_info_text}")
         if iteration_info_text:
             try:
-                iteration_info = eval(iteration_info_text)
+                iteration_info = _wire.decode(iteration_info_text)
                 print(f"Found iteration info: {iteration_info}")
-            except Exception as e:
+            except (ValueError, TypeError) as e:
+                # Reject anything that isn't well-formed wire JSON. Never eval.
                 print(f"Error parsing iteration info: {e}")
                 iteration_info = None
 
@@ -329,14 +351,15 @@ async def github_report_api():
         if not github_data_text:
             raise ValueError("No response from GitHub agent")
 
-        # Try to parse the GitHub data and validate it
+        # Try to parse the GitHub data and validate it. _wire.decode is a
+        # strict JSON parser — never executes untrusted content.
         try:
-            github_data = eval(github_data_text)
+            github_data = _wire.decode(github_data_text)
             if not isinstance(github_data, dict):
                 raise ValueError(f"GitHub data is not a dictionary: {type(github_data)}")
             if 'member_stats' not in github_data:
                 raise ValueError("GitHub data missing required 'member_stats' field")
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             logger.error(f"Failed to parse GitHub data: {e}")
             logger.error(f"Raw data: {github_data_text}")
             raise ValueError(f"Failed to parse GitHub data: {e}")
@@ -550,17 +573,26 @@ async def publish_report(background_tasks: BackgroundTasks):
             "iteration_name": iteration_info.get("name", "N/A")
         })
         
+    except ValueError as e:
+        # Input-shape errors (bad report format, unparseable peer response,
+        # missing env vars) are safe to surface — they describe the bad
+        # input, not internal state.
+        return JSONResponse({"error": str(e)}, status_code=500)
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in publish_report: {error_details}")
-        return JSONResponse(
-            {
-                "error": f"Failed to publish report: {str(e)}",
-                "details": error_details
-            }, 
-            status_code=500
+        import traceback, uuid
+        correlation_id = uuid.uuid4().hex[:12]
+        logger.error(
+            "publish_report failed (correlation_id=%s): %s\n%s",
+            correlation_id, e, traceback.format_exc(),
         )
+        body = {
+            "error": "Failed to publish report",
+            "correlation_id": correlation_id,
+        }
+        if os.environ.get("DEBUG") == "1":
+            body["details"] = traceback.format_exc()
+            body["error"] = f"Failed to publish report: {e}"
+        return JSONResponse(body, status_code=500)
 
 async def main():
     from mcp.server.stdio import stdio_server

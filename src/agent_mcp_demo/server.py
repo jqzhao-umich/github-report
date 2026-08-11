@@ -185,54 +185,76 @@ async def root():
         <script>
             // Store the current report content
             let currentReportContent = null;
-            
+
+            // XSS-safe helpers: build DOM nodes with textContent, never
+            // interpolate user/GitHub-controlled strings into innerHTML.
+            function renderMessage(container, cls, text) {
+                const div = document.createElement('div');
+                div.className = cls;
+                div.textContent = text;
+                container.replaceChildren(div);
+            }
+            function renderReport(container, text) {
+                // Report is plain text; render in a <pre> block via textContent.
+                const wrap = document.createElement('div');
+                wrap.className = 'report';
+                const pre = document.createElement('pre');
+                pre.textContent = text;
+                wrap.appendChild(pre);
+                container.replaceChildren(wrap);
+            }
+            function showStatus(container, kind, text) {
+                document.querySelector('.status-message')?.remove();
+                const div = document.createElement('div');
+                div.className = kind === 'error' ? 'status-message error' : 'status-message success';
+                div.textContent = text;
+                container.parentNode.insertBefore(div, container);
+                return div;
+            }
+
             async function loadReport() {
                 const btn = document.querySelector('.primary-btn');
                 const container = document.getElementById('report-container');
-                
+
                 btn.disabled = true;
                 btn.textContent = 'Loading...';
-                container.innerHTML = '<div class="loading">Loading report...</div>';
-                
+                renderMessage(container, 'loading', 'Loading report...');
+
                 try {
                     const response = await fetch('/api/github-report');
                     const data = await response.text();
-                    
+
                     if (response.ok) {
                         // Store the report content for publishing
                         currentReportContent = data;
-                        container.innerHTML = '<div class="report">' + data + '</div>';
+                        renderReport(container, data);
                     } else {
                         currentReportContent = null;
-                        container.innerHTML = '<div class="error">Error: ' + data + '</div>';
+                        renderMessage(container, 'error', 'Error: ' + data);
                     }
                 } catch (error) {
                     currentReportContent = null;
-                    container.innerHTML = '<div class="error">Error loading report: ' + error.message + '</div>';
+                    renderMessage(container, 'error', 'Error loading report: ' + error.message);
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Refresh Report';
                 }
             }
-            
+
             async function publishReport() {
                 const btn = document.querySelector('.success-btn');
                 const container = document.getElementById('report-container');
-                
+
                 // Check if report is loaded
                 if (!currentReportContent) {
-                    container.insertAdjacentHTML('beforebegin',
-                        '<div class="status-message error">Please load or refresh the report first before publishing.</div>'
-                    );
-                    setTimeout(() => {
-                        document.querySelector('.status-message')?.remove();
-                    }, 5000);
+                    const msg = showStatus(container, 'error', 'Please load or refresh the report first before publishing.');
+                    setTimeout(() => msg.remove(), 5000);
                     return;
                 }
-                
+
                 btn.disabled = true;
                 btn.textContent = 'Publishing...';
-                
+
                 try {
                     const response = await fetch('/api/reports/publish', {
                         method: 'POST',
@@ -244,27 +266,17 @@ async def root():
                         })
                     });
                     const result = await response.json();
-                    
+
                     if (response.ok) {
-                        container.insertAdjacentHTML('beforebegin', 
-                            '<div class="status-message success">' + 
-                            'Report published successfully for ' + result.org_name + 
-                            (result.iteration_name ? ' - ' + result.iteration_name : '') +
-                            '<br>Check the docs folder or GitHub Pages for the published report.' +
-                            '</div>'
-                        );
+                        const suffix = result.iteration_name ? ' - ' + result.iteration_name : '';
+                        showStatus(container, 'success',
+                            'Report published successfully for ' + result.org_name + suffix +
+                            '. Check the docs folder or GitHub Pages for the published report.');
                     } else {
-                        container.insertAdjacentHTML('beforebegin',
-                            '<div class="status-message error">Error: ' + 
-                            (result.error || 'Failed to publish report') + 
-                            '</div>'
-                        );
+                        showStatus(container, 'error', 'Error: ' + (result.error || 'Failed to publish report'));
                     }
                 } catch (error) {
-                    container.insertAdjacentHTML('beforebegin',
-                        '<div class="status-message error">Error: ' + 
-                        error.message + '</div>'
-                    );
+                    showStatus(container, 'error', 'Error: ' + error.message);
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Save to GitHub Pages';
@@ -286,18 +298,6 @@ async def root():
 
 # Store notes as a simple key-value dict to demonstrate state management
 notes: dict[str, str] = {}
-
-# Agent 1: Fetch data from an API
-async def fetch_from_api(url: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.json()
-
-# Agent 2: Read data from a JSON file
-def read_from_json_file(filepath: str) -> dict:
-    with open(filepath, 'r') as f:
-        return json.load(f)
 
 # Agent 3: Get iteration information from GitHub Projects (GraphQL API)
 # NOTE: This function has been moved to utils/iteration_info.py
@@ -408,28 +408,6 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["name", "content"],
             },
         ),
-        types.Tool(
-            name="fetch-api-data",
-            description="Fetch data from a public API (Agent 1)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "format": "uri"}
-                },
-                "required": ["url"],
-            },
-        ),
-        types.Tool(
-            name="read-json-file",
-            description="Read data from a JSON file (Agent 2)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "filepath": {"type": "string"}
-                },
-                "required": ["filepath"],
-            },
-        ),
     ]
 
 async def handle_call_tool(
@@ -442,7 +420,7 @@ async def handle_call_tool(
     Tools can modify server state and notify clients of changes.
     """
     # Check for unknown tools first (before checking arguments)
-    valid_tools = ["add-note", "fetch-api-data", "read-json-file"]
+    valid_tools = ["add-note"]
     if name not in valid_tools:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -465,28 +443,6 @@ async def handle_call_tool(
             types.TextContent(
                 type="text",
                 text=f"Added note '{note_name}' with content: {content}",
-            )
-        ]
-    elif name == "fetch-api-data":
-        url = arguments.get("url")
-        if not url:
-            raise ValueError("Missing url")
-        data = await fetch_from_api(url)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Fetched data from API {url}: {json.dumps(data)[:500]}",
-            )
-        ]
-    elif name == "read-json-file":
-        filepath = arguments.get("filepath")
-        if not filepath:
-            raise ValueError("Missing filepath")
-        data = read_from_json_file(filepath)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Read data from file {filepath}: {json.dumps(data)[:500]}",
             )
         ]
 
@@ -893,17 +849,25 @@ async def publish_report_endpoint(
             "iteration_name": iteration_info.get("name", "N/A")
         })
         
+    except ValueError as e:
+        # Input-shape errors are safe to surface (they describe the bad
+        # input, not internal state).
+        return JSONResponse({"error": str(e)}, status_code=500)
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in publish_report: {error_details}")
-        return JSONResponse(
-            {
-                "error": f"Failed to publish report: {str(e)}",
-                "details": error_details
-            }, 
-            status_code=500
+        import traceback, uuid, logging
+        correlation_id = uuid.uuid4().hex[:12]
+        logging.getLogger(__name__).error(
+            "publish_report failed (correlation_id=%s): %s\n%s",
+            correlation_id, e, traceback.format_exc(),
         )
+        body = {
+            "error": "Failed to publish report",
+            "correlation_id": correlation_id,
+        }
+        if os.environ.get("DEBUG") == "1":
+            body["details"] = traceback.format_exc()
+            body["error"] = f"Failed to publish report: {e}"
+        return JSONResponse(body, status_code=500)
 
 async def main():
     # Run the server using stdin/stdout streams

@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 
 from agent_mcp_demo.agents.web_interface_agent import app, server
-from agent_mcp_demo.agents import _peer_client
+from agent_mcp_demo.agents import _peer_client, _wire
 from mcp.types import TextContent
 
 
@@ -147,39 +147,9 @@ def create_mock_github_data():
     }
 
 def serialize_github_data(data):
-    """Serialize GitHub data with datetime objects to a string that can be eval'd."""
-    import json
-    from datetime import datetime
-    
-    def datetime_handler(obj):
-        if isinstance(obj, datetime):
-            return f"datetime.fromisoformat('{obj.isoformat()}')"
-        return obj
-    
-    # Convert to JSON-like string but with datetime objects properly formatted
-    def convert_dict(d):
-        if isinstance(d, dict):
-            items = []
-            for k, v in d.items():
-                key_str = f"'{k}'" if isinstance(k, str) else str(k)
-                val_str = convert_value(v)
-                items.append(f"{key_str}: {val_str}")
-            return "{" + ", ".join(items) + "}"
-        return str(d)
-    
-    def convert_value(v):
-        if isinstance(v, datetime):
-            return f"datetime.fromisoformat('{v.isoformat()}')"
-        elif isinstance(v, dict):
-            return convert_dict(v)
-        elif isinstance(v, list):
-            return "[" + ", ".join(convert_value(item) for item in v) + "]"
-        elif isinstance(v, str):
-            return f"'{v}'"
-        else:
-            return str(v)
-    
-    return convert_dict(data)
+    """Wire-encode GitHub data for tests. Wraps _wire.encode so existing test
+    call sites keep working after the eval()→JSON port."""
+    return _wire.encode(data)
 
 @pytest.fixture
 def mock_env_vars():
@@ -196,7 +166,7 @@ def mock_server_context():
     mock_context, mock_session = create_mock_server_context()
 
     mock_session.call_tool.side_effect = [
-        [TextContent(type="text", text=str({
+        [TextContent(type="text", text=_wire.encode({
             'name': 'Sprint 1',
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
@@ -294,7 +264,7 @@ async def test_github_report_with_mock_data(mock_env_vars, mock_server_context):
     # Setup mock responses
     mock_server_context.call_tool.side_effect = [
                     # First call - iteration info
-            [TextContent(type="text", text=str({
+            [TextContent(type="text", text=_wire.encode({
                 'name': 'Sprint 1',
                 'start_date': '2025-11-01',
                 'end_date': '2025-11-15'
@@ -322,7 +292,7 @@ async def test_publish_report_success(mock_env_vars, mock_server_context, mock_p
     """Test successful report publishing."""
     # Setup mock responses
     mock_server_context.call_tool.side_effect = [
-        [TextContent(type="text", text=str({
+        [TextContent(type="text", text=_wire.encode({
             'name': 'Sprint 1',
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
@@ -351,7 +321,7 @@ async def test_publish_report_failure(mock_env_vars, mock_server_context, mock_p
     
     # Setup mock responses for report generation
     mock_server_context.call_tool.side_effect = [
-        [TextContent(type="text", text=str({
+        [TextContent(type="text", text=_wire.encode({
             'name': 'Sprint 1',
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
@@ -395,7 +365,7 @@ async def test_report_contains_pr_metrics(mock_env_vars, mock_server_context):
     """Test that generated report includes PR metrics in summary table."""
     # Setup mock responses
     mock_server_context.call_tool.side_effect = [
-        [TextContent(type="text", text=str({
+        [TextContent(type="text", text=_wire.encode({
             'name': 'Sprint 1',
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
@@ -424,7 +394,7 @@ async def test_report_contains_pr_detail_sections(mock_env_vars, mock_server_con
     """Test that generated report includes PR detail sections."""
     # Setup mock responses with PR data
     mock_server_context.call_tool.side_effect = [
-        [TextContent(type="text", text=str({
+        [TextContent(type="text", text=_wire.encode({
             'name': 'Sprint 1',
             'start_date': '2025-11-01',
             'end_date': '2025-11-15'
@@ -486,7 +456,7 @@ async def test_publish_report_invalid_data(mock_env_vars, mock_server_context):
     """Test publishing with invalid GitHub data."""
     # Mock invalid GitHub data response
     mock_server_context.call_tool.side_effect = [
-                    [TextContent(type="text", text=str({'name': 'Sprint 1'}))],  # iteration info
+                    [TextContent(type="text", text=_wire.encode({'name': 'Sprint 1'}))],  # iteration info
             [TextContent(type="text", text="invalid data")]  # invalid GitHub data
     ]
 

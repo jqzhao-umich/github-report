@@ -368,43 +368,6 @@ class TestServerTools:
             await handle_call_tool("add-note", {"name": "test"})
     
     @pytest.mark.asyncio
-    async def test_fetch_api_data_tool(self):
-        """Test the fetch-api-data tool"""
-        from agent_mcp_demo.server import handle_call_tool
-        
-        with patch('agent_mcp_demo.server.fetch_from_api') as mock_fetch:
-            mock_fetch.return_value = {"test": "data"}
-            
-            result = await handle_call_tool("fetch-api-data", {
-                "url": "https://api.example.com/data"
-            })
-            
-            assert len(result) > 0
-            mock_fetch.assert_called_once_with("https://api.example.com/data")
-    
-    @pytest.mark.asyncio
-    async def test_read_json_file_tool(self):
-        """Test the read-json-file tool"""
-        from agent_mcp_demo.server import handle_call_tool
-        import tempfile
-        import json
-        
-        # Create a temporary JSON file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump({"test": "data"}, f)
-            temp_path = f.name
-        
-        try:
-            result = await handle_call_tool("read-json-file", {
-                "filepath": temp_path
-            })
-            
-            assert len(result) > 0
-            assert "test" in result[0].text.lower()
-        finally:
-            os.unlink(temp_path)
-    
-    @pytest.mark.asyncio
     async def test_unknown_tool(self):
         """Test handling of unknown tool"""
         from agent_mcp_demo.server import handle_call_tool
@@ -517,106 +480,10 @@ class TestServerPrompts:
         with pytest.raises(ValueError, match="Unknown prompt"):
             await handle_get_prompt("unknown-prompt", {})
 
-class TestServerHelpers:
-    """Tests for helper functions in server.py"""
-    
-    @pytest.mark.asyncio
-    async def test_fetch_from_api_success(self):
-        """Test successful API fetch"""
-        from agent_mcp_demo.server import fetch_from_api
-        
-        with patch('agent_mcp_demo.server.httpx.AsyncClient') as mock_client:
-            mock_response = Mock()
-            mock_response.json.return_value = {"test": "data"}
-            mock_response.raise_for_status = Mock()
-            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
-            
-            result = await fetch_from_api("https://api.example.com/data")
-            assert result == {"test": "data"}
-    
-    @pytest.mark.asyncio
-    async def test_fetch_from_api_error(self):
-        """Test API fetch with HTTP error"""
-        from agent_mcp_demo.server import fetch_from_api
-        import httpx
-        
-        with patch('agent_mcp_demo.server.httpx.AsyncClient') as mock_client:
-            mock_response = Mock()
-            mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-                "Not Found", request=Mock(), response=Mock(status_code=404)
-            )
-            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
-            
-            with pytest.raises(httpx.HTTPStatusError):
-                await fetch_from_api("https://api.example.com/notfound")
-    
-    def test_read_from_json_file_success(self):
-        """Test successful JSON file read"""
-        from agent_mcp_demo.server import read_from_json_file
-        import tempfile
-        import json
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump({"test": "data"}, f)
-            temp_path = f.name
-        
-        try:
-            result = read_from_json_file(temp_path)
-            assert result == {"test": "data"}
-        finally:
-            os.unlink(temp_path)
-    
-    def test_read_from_json_file_not_found(self):
-        """Test reading non-existent JSON file"""
-        from agent_mcp_demo.server import read_from_json_file
-        
-        with pytest.raises(FileNotFoundError):
-            read_from_json_file("/nonexistent/file.json")
-    
-    def test_read_from_json_file_invalid_json(self):
-        """Test reading invalid JSON file"""
-        from agent_mcp_demo.server import read_from_json_file
-        import tempfile
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write("invalid json {")
-            temp_path = f.name
-        
-        try:
-            with pytest.raises(json.JSONDecodeError):
-                read_from_json_file(temp_path)
-        finally:
-            os.unlink(temp_path)
-
 class TestServerToolsErrorHandling:
     """Tests for error handling in server tools"""
-    
-    @pytest.mark.asyncio
-    async def test_fetch_api_data_tool_error(self):
-        """Test fetch-api-data tool with API error"""
-        from agent_mcp_demo.server import handle_call_tool
-        import httpx
-        
-        with patch('agent_mcp_demo.server.fetch_from_api') as mock_fetch:
-            mock_fetch.side_effect = httpx.HTTPStatusError(
-                "Not Found", request=Mock(), response=Mock(status_code=404)
-            )
-            
-            with pytest.raises(httpx.HTTPStatusError):
-                await handle_call_tool("fetch-api-data", {
-                    "url": "https://api.example.com/notfound"
-                })
-    
-    @pytest.mark.asyncio
-    async def test_read_json_file_tool_error(self):
-        """Test read-json-file tool with file error"""
-        from agent_mcp_demo.server import handle_call_tool
-        
-        with pytest.raises(FileNotFoundError):
-            await handle_call_tool("read-json-file", {
-                "filepath": "/nonexistent/file.json"
-            })
-    
+
+
     @pytest.mark.asyncio
     async def test_add_note_tool_empty_name(self):
         """Test add-note tool with empty name"""

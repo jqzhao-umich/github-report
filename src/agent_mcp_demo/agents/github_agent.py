@@ -45,6 +45,7 @@ from ..utils.iteration_info import get_current_iteration_info
 from ..utils.github_members import collect_members_and_emails, initialize_detail_structures
 from ..utils.commit_metrics import collect_commit_metrics
 from ..utils.issue_metrics import collect_issue_metrics
+from . import _wire
 
 def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
     """
@@ -279,7 +280,7 @@ async def handle_call_tool(
                 raise GitHubAccessError("Could not fetch iteration information")
                 
             print(f"Successfully retrieved iteration info: {iteration_info}")
-            return [types.TextContent(type="text", text=str(iteration_info))]
+            return [types.TextContent(type="text", text=_wire.encode(iteration_info))]
             
         except Exception as e:
             import traceback
@@ -389,7 +390,7 @@ async def handle_call_tool(
         
         return [types.TextContent(
             type="text",
-            text=str({
+            text=_wire.encode({
                 "member_stats": member_stats,
                 "commit_details": commit_details,
                 "assigned_issues": assigned_issues,
