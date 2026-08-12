@@ -1,138 +1,142 @@
-import pytest
+"""Performance tests for the multi-agent stack.
+
+These need a live stack to be meaningful — timing a mocked call
+tells you nothing about GitHub API latency or concurrent-request
+behavior. They skip when LIVE_MCP_STACK != "1" so the default suite
+stays fast and hermetic; opt in explicitly to run them against a
+running fleet.
+
+test_startup_time also lives here but doesn't need a live peer stack
+(it just times BaseMCPAgent construction / initialize / cleanup).
+"""
+
 import asyncio
+import os
 import time
-from typing import Dict, List
+from typing import Dict
+
+import pytest
+
 from agent_mcp_demo.agents.base import BaseMCPAgent
 from agent_mcp_demo.agents.config import settings
 from agent_mcp_demo.agents.types import GitHubData
 
+
+def _live_stack_available() -> bool:
+    return os.environ.get("LIVE_MCP_STACK") == "1"
+
+
+needs_live_stack = pytest.mark.skipif(
+    not _live_stack_available(),
+    reason=(
+        "Live multi-agent stack not detected. Start the four agents via "
+        "`./start.sh start` and set LIVE_MCP_STACK=1 to run this test."
+    ),
+)
+
+
+@needs_live_stack
 @pytest.mark.performance
 async def test_report_generation_performance():
-    """Test the performance of report generation"""
+    """Full report generation completes in under 30 seconds against
+    the live stack."""
     coordinator = BaseMCPAgent("main-coordinator")
     await coordinator.initialize()
-    
     try:
-        start_time = time.time()
+        start = time.time()
         response = await coordinator.call_agent(
             "main-coordinator",
             "get-github-report",
-            {"org_name": settings.github_org_name}
+            {"org_name": settings.github_org_name},
         )
-        end_time = time.time()
-        
-        # Report generation should take less than 30 seconds
-        assert end_time - start_time < 30
+        elapsed = time.time() - start
+        assert elapsed < 30
         assert response is not None
     finally:
         await coordinator.cleanup()
 
+
+@needs_live_stack
 @pytest.mark.performance
 async def test_concurrent_requests():
-    """Test handling multiple concurrent requests"""
+    """Three concurrent report requests each complete in reasonable
+    time and finish faster in aggregate than sequential execution
+    (indicating real concurrent I/O, not lock contention)."""
     coordinator = BaseMCPAgent("main-coordinator")
     await coordinator.initialize()
-    
     try:
-        # Create multiple concurrent requests
-        async def make_request():
-            start_time = time.time()
-            response = await coordinator.call_agent(
+        async def _one():
+            t0 = time.time()
+            await coordinator.call_agent(
                 "main-coordinator",
                 "get-github-report",
-                {"org_name": settings.github_org_name}
+                {"org_name": settings.github_org_name},
             )
-            end_time = time.time()
-            return end_time - start_time
-        
-        # Run 3 concurrent requests
-        start_time = time.time()
-        times = await asyncio.gather(*[make_request() for _ in range(3)])
-        total_time = time.time() - start_time
-        
-        # Total time should be less than sum of individual times
-        # (indicating concurrent processing)
-        assert total_time < sum(times)
-        
-        # Each request should still complete in reasonable time
-        assert all(t < 45 for t in times)  # 45 seconds per request max
+            return time.time() - t0
+
+        wall_start = time.time()
+        times = await asyncio.gather(*(_one() for _ in range(3)))
+        wall_total = time.time() - wall_start
+
+        # Aggregate wall < sum of individual times → real concurrency.
+        assert wall_total < sum(times)
+        assert all(t < 45 for t in times)
     finally:
         await coordinator.cleanup()
 
+
+@needs_live_stack
 @pytest.mark.performance
 async def test_memory_usage():
-    """Test memory usage during report generation"""
+    """One full report costs < 500 MiB of resident memory. Requires
+    psutil at runtime."""
     import psutil
-    import os
-    
+
     process = psutil.Process(os.getpid())
     coordinator = BaseMCPAgent("main-coordinator")
     await coordinator.initialize()
-    
     try:
-        # Measure initial memory
-        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-        
-        # Generate report
-        response = await coordinator.call_agent(
+        initial_mb = process.memory_info().rss / 1024 / 1024
+        await coordinator.call_agent(
             "main-coordinator",
             "get-github-report",
-            {"org_name": settings.github_org_name}
+            {"org_name": settings.github_org_name},
         )
-        
-        # Measure peak memory
-        peak_memory = process.memory_info().rss / 1024 / 1024  # MB
-        
-        # Memory increase should be reasonable (less than 500MB)
-        assert peak_memory - initial_memory < 500
+        peak_mb = process.memory_info().rss / 1024 / 1024
+        assert peak_mb - initial_mb < 500
     finally:
         await coordinator.cleanup()
 
+
+@needs_live_stack
 @pytest.mark.performance
 async def test_rate_limiting():
-    """Test GitHub API rate limiting handling"""
-    import time
+    """Three back-to-back requests all succeed — the stack handles
+    GitHub rate-limit responses without user-visible failures."""
     coordinator = BaseMCPAgent("main-coordinator")
     await coordinator.initialize()
-    
     try:
-        # Make multiple requests in quick succession
         for _ in range(3):
-            start_time = time.time()
             response = await coordinator.call_agent(
                 "main-coordinator",
                 "get-github-report",
-                {"org_name": settings.github_org_name}
+                {"org_name": settings.github_org_name},
             )
-            end_time = time.time()
-            
-            # Should handle rate limiting gracefully
             assert response is not None
-            # Allow time for rate limit reset
-            await asyncio.sleep(1)
+            await asyncio.sleep(1)  # give the rate limiter a beat
     finally:
         await coordinator.cleanup()
 
+
 @pytest.mark.performance
 def test_startup_time():
-    """Test agent startup performance"""
-    import time
-    
-    # Measure time to start each agent
-    agent_types = ["core-agent", "github-agent", "web-interface-agent", "main-coordinator"]
-    startup_times = {}
-    
-    for agent_type in agent_types:
-        start_time = time.time()
-        agent = BaseMCPAgent(agent_type)
+    """Every agent's synchronous construction + initialize + cleanup
+    completes in under 2 seconds. Doesn't touch the peer-RPC seam,
+    so it runs without a live stack."""
+    for name in ("core-agent", "github-agent", "web-interface-agent", "main-coordinator"):
+        t0 = time.time()
+        agent = BaseMCPAgent(name)
         asyncio.run(agent.initialize())
-        end_time = time.time()
-        
-        startup_time = end_time - start_time
-        startup_times[agent_type] = startup_time
-        
-        # Each agent should start in under 2 seconds
-        assert startup_time < 2
-        
-        # Cleanup
+        elapsed = time.time() - t0
+        assert elapsed < 2, f"{name} took {elapsed:.2f}s to initialize"
         asyncio.run(agent.cleanup())

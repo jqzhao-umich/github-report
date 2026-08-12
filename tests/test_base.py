@@ -1,57 +1,60 @@
+import asyncio
 import pytest
-from unittest.mock import Mock, AsyncMock
-import os
-import json
+from unittest.mock import AsyncMock
 from datetime import datetime, timezone
+
 from agent_mcp_demo.agents.config import Settings
 from agent_mcp_demo.agents.utils import get_detroit_timezone, format_datetime
 from agent_mcp_demo.agents.base import BaseMCPAgent
+from agent_mcp_demo.agents import _peer_client
+
 
 @pytest.fixture
 def mock_settings():
     return Settings(
         github_token="test-token",
         github_org_name="test-org",
-        github_iteration_name="Test Sprint"
+        github_iteration_name="Test Sprint",
     )
 
-@pytest.fixture
-def mock_agent():
-    agent = BaseMCPAgent("test-agent")
-    agent.server.request_context = Mock()
-    agent.server.request_context.session = AsyncMock()
-    return agent
 
 async def test_base_agent_initialization():
     agent = BaseMCPAgent("test-agent", "1.0.0")
     assert agent.name == "test-agent"
     assert agent.version == "1.0.0"
-    
-    # Test initialization
     await agent.initialize()
-    # Test cleanup
     await agent.cleanup()
 
-async def test_agent_call_with_retry():
+
+async def test_agent_call_with_retry(monkeypatch):
+    """BaseMCPAgent.call_agent now goes through _peer_client.call_peer_tool
+    (MCP 2.0 seam). Verify the retry contract still holds: successful
+    call returns immediately; transient failures are retried up to
+    max_retries times, then the last attempt's response is returned."""
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
     agent = BaseMCPAgent("test-agent")
-    agent.server.request_context = Mock()
-    session_mock = AsyncMock()
-    agent.server.request_context.session = session_mock
-    
-    # Test successful call
-    session_mock.call_tool.return_value = ["success"]
+
+    # Successful call: raw text becomes [TextContent(text=...)] under the hood.
+    async def _ok(a, t, args=None):
+        return "success"
+
+    monkeypatch.setattr(_peer_client, "call_peer_tool", _ok)
     result = await agent.call_agent("other-agent", "test-tool", {"param": "value"})
-    assert result == ["success"]
-    
-    # Test retry on failure
-    session_mock.call_tool.side_effect = [
-        Exception("First failure"),
-        Exception("Second failure"),
-        ["success after retry"]
-    ]
+    assert isinstance(result, list) and result[0].text == "success"
+
+    # Retry-then-succeed contract.
+    call_count = {"n": 0}
+
+    async def _flaky(a, t, args=None):
+        call_count["n"] += 1
+        if call_count["n"] <= 2:
+            raise Exception(f"failure {call_count['n']}")
+        return "success after retry"
+
+    monkeypatch.setattr(_peer_client, "call_peer_tool", _flaky)
     result = await agent.call_agent("other-agent", "test-tool", {"param": "value"})
-    assert result == ["success after retry"]
-    assert session_mock.call_tool.call_count == 3
+    assert result[0].text == "success after retry"
+    assert call_count["n"] == 3
 
 def test_timezone_utils():
     # Test Detroit timezone

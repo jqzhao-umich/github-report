@@ -60,17 +60,30 @@ class BaseMCPAgent:
             await self.cleanup()
             
     async def call_agent(
-        self, 
-        agent: str, 
-        tool: str, 
+        self,
+        agent: str,
+        tool: str,
         arguments: Optional[dict] = None,
         retry_count: int = 0
     ) -> list[mcp.types.TextContent]:
-        """Call another agent's tool with retry logic"""
+        """Call another agent's tool with retry logic.
+
+        Under MCP 1.x this reached out via ``server.request_context`` — a
+        ContextVar seam that was removed in MCP 2.0. The equivalent shim
+        is :func:`agent_mcp_demo.agents._peer_client.call_peer_tool`,
+        which returns the peer's response as raw text. We wrap that in a
+        one-element list of ``TextContent`` so existing call sites (and
+        the ``integration`` / ``performance`` tests) keep the same API.
+        """
+        from . import _peer_client
         try:
-            return await self.server.request_context.session.call_tool(
-                agent, tool, arguments
-            )
+            result = await _peer_client.call_peer_tool(agent, tool, arguments)
+            return [mcp.types.TextContent(type="text", text=result)]
+        except NotImplementedError:
+            # No peer-agent RPC is wired for this process. Propagate
+            # immediately without retrying — retries won't change the
+            # fact that there is no live stack.
+            raise
         except Exception as e:
             if retry_count < settings.max_retries:
                 self.logger.warning(f"Error calling {agent}.{tool}, retrying... ({retry_count + 1}/{settings.max_retries})")
