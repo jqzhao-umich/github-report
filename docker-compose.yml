@@ -8,8 +8,23 @@ services:
         GROUP_ID: ${GROUP_ID:-1000}
         USERNAME: ${USERNAME:-appuser}
     ports:
-      - "8000:8000"
+      # Bind to loopback by default so `docker compose up` on a
+      # developer machine doesn't expose the service on all interfaces.
+      # Override with BIND_ADDRESS=0.0.0.0 (or a specific interface)
+      # when placing this behind an authenticated proxy.
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     environment:
+      # AUTH_TOKEN is required in Compose. The `${VAR?message}` form
+      # (no colon) fails `docker compose up` when the variable is
+      # completely unset, but tolerates an empty value so operators
+      # can still opt into ALLOW_ANONYMOUS=1 for local development
+      # with `AUTH_TOKEN=`. This closes the previous fail-open
+      # regression where a forgotten variable produced a silently
+      # anonymous service — now the deploy either has a token or
+      # is explicitly acknowledged as dev-mode. The auth module
+      # (auth.py) enforces the same contract at runtime (503).
+      - AUTH_TOKEN=${AUTH_TOKEN?AUTH_TOKEN must be set (or set to empty with ALLOW_ANONYMOUS=1 for local dev)}
+      - ALLOW_ANONYMOUS=${ALLOW_ANONYMOUS:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_ORG_NAME=${GITHUB_ORG_NAME}
       - GITHUB_ITERATION_START=${GITHUB_ITERATION_START:-}
