@@ -4,12 +4,113 @@ Shared pytest fixtures and configuration
 
 import pytest
 import os
+import socket
 import sys
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+
+# ---------------------------------------------------------------------------
+# Network isolation for tests.
+#
+# PROJECT_REVIEW.md recommendation #1: any unexpected outbound network call
+# should fail immediately. Two failure modes we're guarding against:
+#
+#   1. The web_interface_agent report endpoint calls get_github_username()
+#      which hits https://api.github.com/user. Tests that mock the peer-agent
+#      RPC but forget to mock this helper silently reach the real GitHub API
+#      (or fail with DNS in restricted CI).
+#   2. Any future test that constructs a real HTTP client without mocking
+#      will similarly slip past reviewers.
+#
+# The autouse fixture below monkey-patches socket.socket.connect at the
+# session level. Tests marked @pytest.mark.network (or that opt in via the
+# `allow_network` fixture) can perform real network I/O; every other test
+# gets a loud RuntimeError the moment it tries to open a TCP socket.
+# ---------------------------------------------------------------------------
+
+_ALLOW_LOCAL_NETWORK = True  # ASGI TestClient uses in-process transport, but
+                             # allow 127.0.0.1/::1 anyway for anything that
+                             # spins up an ephemeral local server.
+
+_original_socket_connect = socket.socket.connect
+
+
+def _local_address(address):
+    if not isinstance(address, tuple) or not address:
+        return False
+    host = address[0]
+    return host in ("127.0.0.1", "::1", "localhost", "", "0.0.0.0")
+
+
+def _blocked_socket_connect(self, address):
+    if _ALLOW_LOCAL_NETWORK and _local_address(address):
+        return _original_socket_connect(self, address)
+    raise RuntimeError(
+        "Blocked unexpected network call to %r. Tests must mock outbound "
+        "network access; mark with @pytest.mark.network or use the "
+        "`allow_network` fixture if the call is genuinely required."
+        % (address,)
+    )
+
+
+@pytest.fixture(autouse=True)
+def _block_network(request, monkeypatch):
+    """Fail any outbound TCP connect that wasn't explicitly opted into.
+
+    Skips when the test carries the `network` marker or uses the
+    `allow_network` fixture.
+    """
+    if "network" in request.keywords or "allow_network" in request.fixturenames:
+        yield
+        return
+    monkeypatch.setattr(socket.socket, "connect", _blocked_socket_connect)
+    yield
+
+
+@pytest.fixture
+def allow_network(monkeypatch):
+    """Opt-in escape hatch for tests that really need real network I/O."""
+    monkeypatch.setattr(socket.socket, "connect", _original_socket_connect)
+    yield
+
+
+# ---------------------------------------------------------------------------
+# Auto-mock get_github_username so web_interface_agent report generation
+# never accidentally hits the live GitHub API.
+#
+# The tests in tests/test_web_interface.py go through
+# web_interface_agent.github_report_api(), which calls get_github_username()
+# on the module. That helper does a `requests.get('https://api.github.com/user')`
+# even after the peer-agent RPC seam is mocked, so without this fixture the
+# suite depends on outbound network for a non-obvious code path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _mock_github_username_lookup(request):
+    """Replace the real GitHub username helper with a deterministic mock."""
+    if "allow_github_username_lookup" in request.fixturenames:
+        yield None
+        return
+    try:
+        from agent_mcp_demo.agents import web_interface_agent as _web
+    except Exception:
+        # web_interface_agent isn't importable in every environment; skip.
+        yield None
+        return
+    with patch.object(_web, "get_github_username", return_value="test-current-user"):
+        yield "test-current-user"
+
+
+@pytest.fixture
+def allow_github_username_lookup():
+    """Opt-in fixture to skip auto-mock (used by tests that assert on the
+    real helper's behavior)."""
+    yield
 
 @pytest.fixture(scope="session")
 def test_data_dir():

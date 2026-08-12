@@ -81,14 +81,14 @@ async def test_github_agent_auth_error():
     with pytest.raises(GitHubAuthError):
         await handle_call_tool("get-github-data", {"org_name": "test-org"})
 
-async def test_github_data_validation():
-    data = mock_github_data()
+def test_github_data_validation(mock_github_data):
+    data = mock_github_data
     # Test type checking
     assert isinstance(data["member_stats"], dict)
     for stats in data["member_stats"].values():
         assert isinstance(stats, dict)
         assert all(isinstance(v, int) for v in stats.values())
-    
+
     # Test required fields
     for member in data["member_stats"]:
         stats = data["member_stats"][member]
@@ -100,11 +100,11 @@ async def test_github_data_validation():
         assert "pr_merged" in stats
         assert "pr_commented" in stats
 
-async def test_iteration_info_validation():
-    info = mock_iteration_info()
+def test_iteration_info_validation(mock_iteration_info):
+    info = mock_iteration_info
     # Test required fields
     assert all(key in info for key in ["name", "start_date", "end_date", "path"])
-    
+
     # Test date format
     from datetime import datetime
     start = datetime.fromisoformat(info["start_date"].replace("Z", "+00:00"))
