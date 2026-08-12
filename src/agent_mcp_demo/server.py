@@ -25,7 +25,7 @@ import json
 import httpx
 import requests
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Depends, Request
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from mcp.server.models import InitializationOptions
 import mcp.types as types
@@ -44,6 +44,7 @@ load_dotenv()
 
 # Add the src directory to the path so we can import from agent_mcp_demo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from agent_mcp_demo.auth import require_auth
 from agent_mcp_demo.utils.report_publisher import ReportPublisher
 from agent_mcp_demo.utils.git_operations import GitOperations
 from agent_mcp_demo.utils.report_scheduler import ReportScheduler
@@ -496,7 +497,7 @@ server = Server(
     on_call_tool=_on_call_tool,
 )
 
-@app.get("/api/github-report", response_class=PlainTextResponse)
+@app.get("/api/github-report", response_class=PlainTextResponse, dependencies=[Depends(require_auth)])
 async def github_report_api():
     """
     Fetches all members of a GitHub organization, counts their commits and assigned issues for the current iteration, and returns a report.
@@ -532,20 +533,36 @@ async def github_report_api():
         auth = Auth.Token(GITHUB_TOKEN)
         g = Github(auth=auth, timeout=5)  # Short timeout for testing
         
-        # Test the connection by getting user info
+        # Test the connection by getting user info. Log the raw
+        # exception server-side (with a correlation id) but never
+        # return the exception text — GitHub's error messages can
+        # include repo/org names, request IDs, and rate-limit hints
+        # that we don't want to surface to unauthenticated callers.
+        import uuid, logging as _logging
+        _log = _logging.getLogger(__name__)
         try:
             current_user = g.get_user()
             current_user_login = current_user.login
             print(f"Connected as: {current_user_login}")
         except Exception as e:
-            return f"GitHub authentication failed: {str(e)}\n\nPlease check your GitHub token."
-        
+            corr = uuid.uuid4().hex[:12]
+            _log.error("GitHub authentication failed (correlation_id=%s): %r", corr, e)
+            return (
+                "GitHub authentication failed. Please check your GitHub token. "
+                f"correlation_id={corr}"
+            )
+
         # Test organization access
         try:
             org = g.get_organization(ORG_NAME)
             print(f"Accessing organization: {org.login}")
         except Exception as e:
-            return f"Error accessing organization '{ORG_NAME}': {str(e)}\n\nPlease check your organization name and permissions."
+            corr = uuid.uuid4().hex[:12]
+            _log.error("Error accessing organization (correlation_id=%s): %r", corr, e)
+            return (
+                f"Error accessing organization '{ORG_NAME}'. Check your organization "
+                f"name and permissions. correlation_id={corr}"
+            )
         
         # Collect members and build email mapping using shared utility
         member_stats, email_to_login, member_logins = collect_members_and_emails(
@@ -730,9 +747,17 @@ async def github_report_api():
         report.append(f"Generation time: {(report_end_time - request_start_time).total_seconds():.2f} seconds")
         
         return "\n".join(report)
-        
+
     except Exception as e:
-        return f"Unexpected error: {str(e)}\n\nPlease check your GitHub token and organization access."
+        import uuid, logging as _logging
+        corr = uuid.uuid4().hex[:12]
+        _logging.getLogger(__name__).exception(
+            "Unexpected error building report (correlation_id=%s)", corr,
+        )
+        return (
+            "Unexpected error building report. Please check your GitHub token "
+            f"and organization access. correlation_id={corr}"
+        )
 
 @app.get("/github-report", response_class=PlainTextResponse)
 async def github_report():
@@ -741,26 +766,77 @@ async def github_report():
     """
     return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
 
-@app.post("/api/reports/publish", response_class=JSONResponse)
+MAX_PUBLISH_BODY_BYTES = int(os.environ.get("MAX_PUBLISH_BODY_BYTES", 2 * 1024 * 1024))  # 2 MiB default
+MAX_REPORT_CONTENT_BYTES = int(os.environ.get("MAX_REPORT_CONTENT_BYTES", 1 * 1024 * 1024))  # 1 MiB default
+
+
+@app.post(
+    "/api/reports/publish",
+    response_class=JSONResponse,
+    dependencies=[Depends(require_auth)],
+)
 async def publish_report_endpoint(
-    background_tasks: BackgroundTasks, 
+    background_tasks: BackgroundTasks,
     request: Request,
     force: bool = False
 ):
     """
     Publish the current report to GitHub Pages.
     The report content should be provided in the request body.
-    
+
     Args:
         force: If True, skip duplicate checking and force publish
     """
     try:
-        # Get report content from request body
-        body = await request.json()
-        report_text = body.get('report_content')
-        
+        # Guard against oversized bodies BEFORE parsing JSON.
+        # Fast path — reject on an honestly declared oversized Content-Length.
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "Invalid Content-Length"}, status_code=400)
+            if declared > MAX_PUBLISH_BODY_BYTES:
+                return JSONResponse(
+                    {"error": f"Request body exceeds {MAX_PUBLISH_BODY_BYTES}-byte limit"},
+                    status_code=413,
+                )
+
+        # Stream the body and abort as soon as the cumulative size
+        # exceeds the cap. This bounds memory use to
+        # MAX_PUBLISH_BODY_BYTES + one chunk, regardless of what the
+        # sender declares (or omits) in Content-Length. Chunked / no-
+        # length requests that would previously buffer without limit
+        # are now cut off mid-stream.
+        chunks = []
+        total = 0
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_PUBLISH_BODY_BYTES:
+                return JSONResponse(
+                    {"error": f"Request body exceeds {MAX_PUBLISH_BODY_BYTES}-byte limit"},
+                    status_code=413,
+                )
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        try:
+            body = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+        report_text = body.get('report_content') if isinstance(body, dict) else None
+
         if not report_text:
             return JSONResponse({"error": "No report content provided"}, status_code=400)
+        if not isinstance(report_text, str):
+            return JSONResponse({"error": "report_content must be a string"}, status_code=400)
+        if len(report_text.encode("utf-8")) > MAX_REPORT_CONTENT_BYTES:
+            return JSONResponse(
+                {"error": f"report_content exceeds {MAX_REPORT_CONTENT_BYTES}-byte limit"},
+                status_code=413,
+            )
         
         # Check if the report is an error message (starts with error indicators)
         if isinstance(report_text, str) and (
@@ -854,20 +930,19 @@ async def publish_report_endpoint(
         # input, not internal state).
         return JSONResponse({"error": str(e)}, status_code=500)
     except Exception as e:
-        import traceback, uuid, logging
+        # Debug traceback responses were removed: even a misconfigured
+        # DEBUG=1 flag in production must not leak internal state to
+        # unauthenticated callers. The full traceback still lands in
+        # server logs, keyed by correlation_id.
+        import logging, uuid
         correlation_id = uuid.uuid4().hex[:12]
-        logging.getLogger(__name__).error(
-            "publish_report failed (correlation_id=%s): %s\n%s",
-            correlation_id, e, traceback.format_exc(),
+        logging.getLogger(__name__).exception(
+            "publish_report failed (correlation_id=%s)", correlation_id,
         )
-        body = {
-            "error": "Failed to publish report",
-            "correlation_id": correlation_id,
-        }
-        if os.environ.get("DEBUG") == "1":
-            body["details"] = traceback.format_exc()
-            body["error"] = f"Failed to publish report: {e}"
-        return JSONResponse(body, status_code=500)
+        return JSONResponse(
+            {"error": "Failed to publish report", "correlation_id": correlation_id},
+            status_code=500,
+        )
 
 async def main():
     # Run the server using stdin/stdout streams

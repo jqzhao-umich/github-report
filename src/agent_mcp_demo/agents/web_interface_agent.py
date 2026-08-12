@@ -19,7 +19,7 @@ Note: This agent bridges MCP protocol and HTTP, enabling both programmatic
 and web-based access to GitHub organization reports.
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -29,6 +29,7 @@ from datetime import datetime, timezone, timedelta
 from mcp.server import Server, NotificationOptions, InitializationOptions
 
 from . import _peer_client, _wire
+from ..auth import require_auth
 
 # Set up logging
 os.makedirs('logs', exist_ok=True)
@@ -293,7 +294,7 @@ async def root():
     </html>
     """
 
-@app.get("/api/github-report", response_class=JSONResponse)
+@app.get("/api/github-report", response_class=JSONResponse, dependencies=[Depends(require_auth)])
 async def github_report_api():
     """
     Fetches all members of a GitHub organization, counts their commits and assigned issues for the current iteration, 
@@ -330,14 +331,22 @@ async def github_report_api():
             {"org_name": ORG_NAME},
         )
 
-        logger.info(f"Iteration info result: {iteration_info_text}")
+        # Peer-agent responses may contain arbitrary GitHub-derived text
+        # (issue titles, commit messages, error strings from GitHub's
+        # API). Log only a length/type summary — never the full payload —
+        # so log files can't be turned into an attacker echo channel.
+        logger.info(
+            "Iteration info result: len=%s type=%s",
+            len(iteration_info_text) if iteration_info_text else 0,
+            type(iteration_info_text).__name__,
+        )
         if iteration_info_text:
             try:
                 iteration_info = _wire.decode(iteration_info_text)
-                print(f"Found iteration info: {iteration_info}")
-            except (ValueError, TypeError) as e:
+                logger.info("Parsed iteration info OK")
+            except (ValueError, TypeError):
                 # Reject anything that isn't well-formed wire JSON. Never eval.
-                print(f"Error parsing iteration info: {e}")
+                logger.warning("Iteration info was not valid wire JSON; ignoring")
                 iteration_info = None
 
         logger.info("Calling GitHub agent for organization data...")
@@ -347,7 +356,10 @@ async def github_report_api():
             {"org_name": ORG_NAME, "iteration_info": iteration_info},
         )
 
-        logger.info(f"GitHub data result: {github_data_text}")
+        logger.info(
+            "GitHub data result: len=%s",
+            len(github_data_text) if github_data_text else 0,
+        )
         if not github_data_text:
             raise ValueError("No response from GitHub agent")
 
@@ -356,13 +368,14 @@ async def github_report_api():
         try:
             github_data = _wire.decode(github_data_text)
             if not isinstance(github_data, dict):
-                raise ValueError(f"GitHub data is not a dictionary: {type(github_data)}")
+                raise ValueError("GitHub data is not a dictionary")
             if 'member_stats' not in github_data:
                 raise ValueError("GitHub data missing required 'member_stats' field")
         except (ValueError, TypeError) as e:
-            logger.error(f"Failed to parse GitHub data: {e}")
-            logger.error(f"Raw data: {github_data_text}")
-            raise ValueError(f"Failed to parse GitHub data: {e}")
+            # Log the exception summary only. The raw payload stays out
+            # of the log — see the length-only logger.info above.
+            logger.error("Failed to parse GitHub data: %r", e)
+            raise ValueError("Failed to parse GitHub data")
     except (LookupError, AttributeError, NotImplementedError):
         return "MCP server context not available. This endpoint requires the MCP server to be running with agent connections."
     
@@ -478,7 +491,7 @@ async def github_report():
     """
     return "GitHub Report Server is running! Visit / for the web interface or /api/github-report for the raw report."
 
-@app.post("/api/reports/publish", response_class=JSONResponse)
+@app.post("/api/reports/publish", response_class=JSONResponse, dependencies=[Depends(require_auth)])
 async def publish_report(background_tasks: BackgroundTasks):
     """
     Publish the current report to GitHub Pages.
@@ -578,21 +591,17 @@ async def publish_report(background_tasks: BackgroundTasks):
         # missing env vars) are safe to surface — they describe the bad
         # input, not internal state.
         return JSONResponse({"error": str(e)}, status_code=500)
-    except Exception as e:
-        import traceback, uuid
+    except Exception:
+        # Debug traceback responses were removed here too — the full
+        # traceback goes to the logger keyed by correlation_id, never
+        # back to the caller.
+        import uuid
         correlation_id = uuid.uuid4().hex[:12]
-        logger.error(
-            "publish_report failed (correlation_id=%s): %s\n%s",
-            correlation_id, e, traceback.format_exc(),
+        logger.exception("publish_report failed (correlation_id=%s)", correlation_id)
+        return JSONResponse(
+            {"error": "Failed to publish report", "correlation_id": correlation_id},
+            status_code=500,
         )
-        body = {
-            "error": "Failed to publish report",
-            "correlation_id": correlation_id,
-        }
-        if os.environ.get("DEBUG") == "1":
-            body["details"] = traceback.format_exc()
-            body["error"] = f"Failed to publish report: {e}"
-        return JSONResponse(body, status_code=500)
 
 async def main():
     from mcp.server.stdio import stdio_server

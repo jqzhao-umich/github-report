@@ -229,9 +229,10 @@ def test_publish_invalid_json_body(client, mock_env_vars):
         content=b"invalid json",
         headers={"Content-Type": "application/json"}
     )
-    
-    # FastAPI should handle this and return 422 Unprocessable Entity or 500
-    assert response.status_code in [422, 500]
+
+    # 400 is what our size-guarded handler returns after json.loads fails.
+    # Older FastAPI paths may bubble a 422 (Unprocessable Entity) or 500.
+    assert response.status_code in [400, 422, 500]
 
 
 def test_publish_missing_github_token_env(client, mock_publisher):
