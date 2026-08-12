@@ -1,13 +1,106 @@
 """Report publishing utility for GitHub organization reports."""
+import contextlib
+import errno
+import fcntl
+import html
 import os
 import json
+import re
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 import markdown
 import yaml
 from zoneinfo import ZoneInfo
+
+
+# ---------------------------------------------------------------------------
+# XSS defenses.
+#
+# Report content and metadata can originate from GitHub issues, PR titles,
+# commit messages, and other attacker-influenceable inputs. The publisher
+# writes those into static HTML that we ship to GitHub Pages, so any raw
+# HTML that survives to output becomes persistent XSS for readers.
+#
+# Strategy:
+#   * Escape all HTML metacharacters in the markdown source BEFORE handing
+#     it to `markdown.markdown()`. Markdown syntax (#, *, tables, [](url))
+#     does not use <, >, & so escaping is safe. Any raw HTML in the input
+#     becomes literal text in the output.
+#   * After markdown renders, strip href/src attributes whose scheme is
+#     not http(s), mailto, or a bare relative path. This blocks
+#     `[click](javascript:alert(1))` even if the input was already
+#     escaped when it reached us.
+#   * Escape every metadata value before f-string interpolation into the
+#     wrapper HTML template.
+# ---------------------------------------------------------------------------
+
+_SAFE_URL_SCHEMES = ("http:", "https:", "mailto:", "#")
+
+_DANGEROUS_ATTR_RE = re.compile(
+    r"""\s(href|src)\s*=\s*(?P<q>["'])(?P<val>[^"']*)(?P=q)""",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_url(url: str) -> str:
+    """Return a safe href/src value, or '#' for anything suspicious.
+
+    Relative paths are allowed; only absolute URLs go through the
+    scheme allowlist.
+    """
+    stripped = url.strip()
+    if not stripped:
+        return "#"
+    lower = stripped.lower()
+    # javascript:, data:, vbscript:, etc. are all rejected. A relative
+    # URL (no ':' before the first '/', '?' or '#') is allowed.
+    scheme_end = lower.find(":")
+    slash = lower.find("/")
+    query = lower.find("?")
+    hashmark = lower.find("#")
+    for pos in (slash, query, hashmark):
+        if 0 <= pos < scheme_end or scheme_end < 0:
+            return stripped  # relative URL, keep as-is
+    for allowed in _SAFE_URL_SCHEMES:
+        if lower.startswith(allowed):
+            return stripped
+    return "#"
+
+
+def _strip_dangerous_urls(rendered_html: str) -> str:
+    """Rewrite href/src attributes whose scheme isn't in the allowlist."""
+
+    def _replace(match: re.Match) -> str:
+        attr = match.group(1)
+        quote = match.group("q")
+        val = match.group("val")
+        safe = _sanitize_url(val)
+        return f' {attr}={quote}{safe}{quote}'
+
+    return _DANGEROUS_ATTR_RE.sub(_replace, rendered_html)
+
+
+def _render_markdown_safely(source: str) -> str:
+    """Render Markdown to HTML with raw HTML escaped and dangerous URLs
+    stripped. Safe to call on attacker-influenced input."""
+    escaped_source = html.escape(source, quote=False)
+    rendered = markdown.markdown(
+        escaped_source,
+        extensions=["extra", "nl2br", "sane_lists"],
+    )
+    return _strip_dangerous_urls(rendered)
+
+
+def _slug(value: Optional[str], default: str) -> str:
+    """Produce a filesystem-safe slug from an untrusted string."""
+    if not value:
+        return default
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip().lower())
+    slug = slug.strip("-._") or default
+    return slug[:80]
 
 class ReportPublisher:
     def __init__(self, base_dir: str = None):
@@ -48,7 +141,16 @@ class ReportPublisher:
             self._create_index_page()
 
     def _create_index_page(self):
-        """Create the main index.html page for GitHub Pages."""
+        """Create the main index.html page for GitHub Pages.
+
+        The report entries come from reports.json, which contains
+        org/iteration/title strings that may originally have flowed
+        through GitHub PR titles or commit messages. The inline JS below
+        builds each list item with document.createElement + textContent
+        so those values are never interpreted as HTML, and validates the
+        report path against a strict filename regex before dropping it
+        into an <a href>.
+        """
         template = """
 <!DOCTYPE html>
 <html>
@@ -56,6 +158,8 @@ class ReportPublisher:
     <title>GitHub Organization Reports</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'">
     <style>
         body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 1rem; }
         .report-list { list-style: none; padding: 0; }
@@ -72,34 +176,55 @@ class ReportPublisher:
         <!-- Reports will be dynamically inserted here -->
     </div>
     <script>
+        // XSS-safe helpers. Report metadata comes from reports.json and
+        // ultimately from GitHub PR/commit/issue text — never interpolate
+        // it into innerHTML. Use createElement + textContent.
+        const SAFE_PATH = /^[A-Za-z0-9._-]+\\.html$/;
+
+        function safePath(path) {
+            return typeof path === 'string' && SAFE_PATH.test(path) ? path : '#';
+        }
+
+        function buildReportItem(report) {
+            const li = document.createElement('li');
+            li.className = 'report-item';
+
+            const dateDiv = document.createElement('div');
+            dateDiv.className = 'report-date';
+            dateDiv.textContent = new Date(report.date).toLocaleDateString();
+
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'report-title';
+            const link = document.createElement('a');
+            link.href = safePath(report.path);
+            link.textContent = report.title || '';
+            titleDiv.appendChild(link);
+
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'report-meta';
+            metaDiv.textContent =
+                'Sprint: ' + (report.iteration_name || 'N/A') +
+                ' | Organization: ' + (report.org_name || '');
+
+            li.appendChild(dateDiv);
+            li.appendChild(titleDiv);
+            li.appendChild(metaDiv);
+            return li;
+        }
+
         async function loadReports() {
             const response = await fetch('reports.json');
             const reports = await response.json();
             const reportsDiv = document.getElementById('reports');
             const reportsList = document.createElement('ul');
             reportsList.className = 'report-list';
-            
+
             reports.sort((a, b) => new Date(b.date) - new Date(a.date));
-            
-            reports.forEach(report => {
-                const li = document.createElement('li');
-                li.className = 'report-item';
-                li.innerHTML = `
-                    <div class="report-date">${new Date(report.date).toLocaleDateString()}</div>
-                    <div class="report-title">
-                        <a href="${report.path}">${report.title}</a>
-                    </div>
-                    <div class="report-meta">
-                        Sprint: ${report.iteration_name || 'N/A'} |
-                        Organization: ${report.org_name}
-                    </div>
-                `;
-                reportsList.appendChild(li);
-            });
-            
+            reports.forEach(report => reportsList.appendChild(buildReportItem(report)));
+
             reportsDiv.appendChild(reportsList);
         }
-        
+
         loadReports();
     </script>
 </body>
@@ -177,23 +302,27 @@ class ReportPublisher:
             if old_report_removed:
                 print(f"Overwriting existing report for {org_name} - {iteration_name}")
         
-        # Generate human-readable timestamp and slugified names
+        # Generate human-readable timestamp and slugified names. Both
+        # org_name and iteration_name may contain arbitrary characters
+        # (attacker-influenced via GitHub payload / config), so slug
+        # them before using them in filenames.
         local_time = self._get_local_time()
         # Format: 2025-11-12_3-03-PM
         readable_time = local_time.strftime("%Y-%m-%d_%I-%M-%p")
-        iteration_slug = (iteration_name or "no-iteration").lower().replace(" ", "-")
-        base_name = f"{readable_time}_{org_name}_{iteration_slug}"
-        
+        org_slug = _slug(org_name, default="org")
+        iteration_slug = _slug(iteration_name, default="no-iteration")
+        base_name = f"{readable_time}_{org_slug}_{iteration_slug}"
+
         # Save markdown version
         md_path = self.reports_dir / f"{base_name}.md"
         with open(md_path, "w") as f:
             f.write(report_content)
-        
-        # Convert to HTML and save
-        html_content = markdown.markdown(
-            report_content,
-            extensions=['extra', 'nl2br', 'sane_lists']
-        )
+
+        # Convert to HTML and save. See _render_markdown_safely for the
+        # sanitization contract; raw HTML in the source is escaped, and
+        # rendered anchors with a non-allowlisted URL scheme have their
+        # href stripped to '#'.
+        html_content = _render_markdown_safely(report_content)
         html_template = self._wrap_html_template(
             html_content,
             org_name=org_name,
@@ -235,16 +364,33 @@ class ReportPublisher:
         }
 
     def _wrap_html_template(self, content: str, **metadata) -> str:
-        """Wrap HTML content in a template with metadata."""
+        """Wrap HTML content in a template with metadata.
+
+        Every metadata field lands inside PCDATA in the emitted HTML, so
+        each one is HTML-escaped before interpolation. The `content`
+        argument is already sanitized markdown (see
+        `_render_markdown_safely`); we do NOT escape it a second time
+        here or the tags would render as literal text.
+        """
         local_time = self._get_local_time()
         tz_name = "EDT" if local_time.dst() else "EST"
+        # Coerce to str + escape. quote=True is important because the
+        # payload might contain quote characters that would otherwise
+        # break out of surrounding attributes if we ever moved to
+        # attribute interpolation.
+        org_name = html.escape(str(metadata['org_name']), quote=True)
+        iteration_name = html.escape(str(metadata['iteration_name'] or 'N/A'), quote=True)
+        start_date = html.escape(str(metadata['start_date'] or 'N/A'), quote=True)
+        end_date = html.escape(str(metadata['end_date'] or 'N/A'), quote=True)
         return f"""
 <!DOCTYPE html>
 <html>
 <head>
-    <title>GitHub Organization Report - {metadata['org_name']}</title>
+    <title>GitHub Organization Report - {org_name}</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'">
     <style>
         body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 1rem; background-color: #fff; }}
         .metadata {{ background-color: #f5f5f5; padding: 1rem; margin-bottom: 2rem; border-radius: 4px; }}
@@ -265,9 +411,9 @@ class ReportPublisher:
 <body>
     <div class="metadata">
         <h2>Report Metadata</h2>
-        <p><strong>Organization:</strong> {metadata['org_name']}</p>
-        <p><strong>Iteration:</strong> {metadata['iteration_name'] or 'N/A'}</p>
-        <p><strong>Period:</strong> {metadata['start_date'] or 'N/A'} to {metadata['end_date'] or 'N/A'} ({tz_name})</p>
+        <p><strong>Organization:</strong> {org_name}</p>
+        <p><strong>Iteration:</strong> {iteration_name}</p>
+        <p><strong>Period:</strong> {start_date} to {end_date} ({tz_name})</p>
         <p><strong>Generated:</strong> {local_time.strftime('%Y-%m-%d %H:%M:%S')} {tz_name}</p>
     </div>
     <div class="content">
@@ -277,26 +423,86 @@ class ReportPublisher:
 </html>
 """
 
+    @contextlib.contextmanager
+    def _index_lock(self, timeout: float = 30.0):
+        """Advisory file lock over reports.json.
+
+        Two publications can otherwise race the classic
+        read → filter → append → write cycle: A reads the current
+        3 entries, B reads the same 3, both append their new entry,
+        both write back — B's write clobbers A's addition. The lock
+        below serializes the entire critical section using an OS-level
+        ``flock`` on a separate ``.lock`` sibling file. The lock file
+        is created lazily, retried under contention, and released
+        automatically on scope exit or crash (kernel drops flock on
+        fd close).
+        """
+        lock_path = self.docs_dir / "reports.json.lock"
+        # Open (or create) the lock file. We keep the file descriptor
+        # for the whole critical section — closing it releases flock.
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as e:
+                    if e.errno not in (errno.EAGAIN, errno.EACCES):
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"Timed out waiting for reports.json lock at {lock_path}"
+                        )
+                    # Small backoff avoids a tight busy-loop.
+                    time.sleep(0.05)
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
     def _update_reports_index(self, report_info: Dict[str, Any]):
-        """Update the reports.json index file, removing any old entry for the same iteration."""
+        """Update the reports.json index file, removing any old entry for
+        the same (org, iteration) pair.
+
+        Concurrency contract:
+
+        * The whole read → filter → append → write cycle runs inside a
+          ``flock`` on ``reports.json.lock``, so concurrent publications
+          cannot lose each other's entries.
+        * Writes go through ``tempfile + os.replace`` so a crash mid-
+          write never leaves a torn ``reports.json``. Readers always see
+          either the previous complete state or the new complete state.
+        """
         index_file = self.docs_dir / "reports.json"
-        
-        if index_file.exists():
-            with open(index_file) as f:
-                reports = json.load(f)
-        else:
-            reports = []
-        
-        # Remove old entry for the same org and iteration (if exists)
-        org_name = report_info.get("org_name")
-        iteration_name = report_info.get("iteration_name")
-        reports = [
-            r for r in reports 
-            if not (r.get("org_name") == org_name and r.get("iteration_name") == iteration_name)
-        ]
-        
-        # Add new entry
-        reports.append(report_info)
-        
-        with open(index_file, "w") as f:
-            json.dump(reports, f, indent=2)
+        tmp_path = index_file.with_suffix(".json.tmp")
+
+        with self._index_lock():
+            if index_file.exists():
+                with open(index_file) as f:
+                    try:
+                        reports = json.load(f)
+                    except json.JSONDecodeError:
+                        # A previous crash may have left a torn file
+                        # from before atomic writes landed; recover by
+                        # rebuilding from scratch rather than crashing.
+                        reports = []
+            else:
+                reports = []
+
+            org_name = report_info.get("org_name")
+            iteration_name = report_info.get("iteration_name")
+            reports = [
+                r for r in reports
+                if not (r.get("org_name") == org_name and r.get("iteration_name") == iteration_name)
+            ]
+            reports.append(report_info)
+
+            # Atomic write: dump to a sibling tempfile, fsync, rename.
+            # os.replace is atomic on the same filesystem (POSIX + NTFS).
+            with open(tmp_path, "w") as f:
+                json.dump(reports, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, index_file)
