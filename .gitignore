@@ -56,6 +56,12 @@ logs/
 *.sqlite3
 *.sqlite
 
+# Report publisher lock sidecar (fcntl.flock file — process-local,
+# never useful in version control; would otherwise be swept up by the
+# daily workflow's `git add docs/` step).
+docs/reports.json.lock
+docs/reports.json.tmp
+
 # Benchmark results
 benchmark.json
 benchmark.html

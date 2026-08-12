@@ -547,8 +547,13 @@ async def github_report_api():
         except Exception as e:
             corr = uuid.uuid4().hex[:12]
             _log.error("GitHub authentication failed (correlation_id=%s): %r", corr, e)
+            # Keep the "GitHub authentication failed:" prefix (with the
+            # colon) so downstream error-detection heuristics — notably
+            # the daily workflow at .github/workflows/generate-iteration-
+            # report.yml — keep matching. Same for the other returns
+            # below.
             return (
-                "GitHub authentication failed. Please check your GitHub token. "
+                "GitHub authentication failed: check your GitHub token. "
                 f"correlation_id={corr}"
             )
 
@@ -560,8 +565,8 @@ async def github_report_api():
             corr = uuid.uuid4().hex[:12]
             _log.error("Error accessing organization (correlation_id=%s): %r", corr, e)
             return (
-                f"Error accessing organization '{ORG_NAME}'. Check your organization "
-                f"name and permissions. correlation_id={corr}"
+                f"Error accessing organization '{ORG_NAME}': check the organization "
+                f"name and your permissions. correlation_id={corr}"
             )
         
         # Collect members and build email mapping using shared utility
@@ -754,9 +759,13 @@ async def github_report_api():
         _logging.getLogger(__name__).exception(
             "Unexpected error building report (correlation_id=%s)", corr,
         )
+        # Keep the "Unexpected error:" prefix (with the colon) so the
+        # daily workflow's `startswith("Unexpected error:")` heuristic
+        # keeps catching this — see
+        # .github/workflows/generate-iteration-report.yml.
         return (
-            "Unexpected error building report. Please check your GitHub token "
-            f"and organization access. correlation_id={corr}"
+            "Unexpected error: failed to build report. Please check your GitHub "
+            f"token and organization access. correlation_id={corr}"
         )
 
 @app.get("/github-report", response_class=PlainTextResponse)
