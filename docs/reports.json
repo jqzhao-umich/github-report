@@ -178,14 +178,5 @@
     "iteration_name": "Iteration 86",
     "start_date": "2026-07-27",
     "end_date": "2026-08-10T00:00:00"
-  },
-  {
-    "date": "2026-08-11T15:17:29.951325-04:00",
-    "title": "Report for test-org",
-    "path": "2026-08-11_03-17-PM_test-org_no-iteration.html",
-    "org_name": "test-org",
-    "iteration_name": null,
-    "start_date": null,
-    "end_date": null
   }
 ]
