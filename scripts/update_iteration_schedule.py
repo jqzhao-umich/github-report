@@ -33,7 +33,7 @@ def get_actual_current_iteration(token, org_name, project_name):
     projects_query = f"""
     query {{
       organization(login: "{org_name}") {{
-        projectsV2(first: 20) {{
+        projectsV2(first: 100) {{
           nodes {{
             id
             title

@@ -51,7 +51,7 @@ def get_current_iteration_info(
         query = """
         query($orgName: String!) {
           organization(login: $orgName) {
-            projectsV2(first: 20) {
+            projectsV2(first: 100) {
               nodes {
                 id
                 title

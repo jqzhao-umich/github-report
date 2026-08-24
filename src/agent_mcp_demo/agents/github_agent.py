@@ -64,7 +64,7 @@ def get_current_iteration_info(github_token: str, org_name: str, project_name: s
         query = """
         query($orgName: String!) {
           organization(login: $orgName) {
-            projectsV2(first: 20) {
+            projectsV2(first: 100) {
               nodes {
                 id
                 title
