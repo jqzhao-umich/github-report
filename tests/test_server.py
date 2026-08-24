@@ -234,21 +234,17 @@ class TestIterationInfo:
     @patch('agent_mcp_demo.server.requests.post')
     def test_get_iteration_info_from_graphql(self, mock_post):
         """Test getting iteration info from GraphQL API"""
-        # Mock GraphQL response
+        # projectV2(number: ...) returns the single matching project
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             'data': {
                 'organization': {
-                    'projectsV2': {
-                        'nodes': [
-                            {
-                                'id': 'project-1',
-                                'title': 'Michigan App Team Task Board',
-                                'number': 1,
-                                'url': 'https://github.com/orgs/test-org/projects/1'
-                            }
-                        ]
+                    'projectV2': {
+                        'id': 'project-1',
+                        'title': 'Michigan App Team Task Board',
+                        'number': 4,
+                        'url': 'https://github.com/orgs/test-org/projects/4'
                     }
                 }
             }
@@ -294,15 +290,13 @@ class TestIterationInfo:
     @patch('agent_mcp_demo.server.requests.post')
     def test_get_iteration_info_fallback_to_env(self, mock_post, mock_iteration_env):
         """Test that iteration info falls back to environment variables"""
-        # Mock GraphQL response with no project found
+        # projectV2 lookup returns null when the number doesn't resolve
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             'data': {
                 'organization': {
-                    'projectsV2': {
-                        'nodes': []
-                    }
+                    'projectV2': None
                 }
             }
         }

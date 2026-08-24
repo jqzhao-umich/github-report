@@ -24,39 +24,51 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import requests
 
-def get_actual_current_iteration(token, org_name, project_name):
-    """Get the actual current iteration (not adjusted for report generation)."""
-    print(f"Fetching projects for organization: {org_name}")
-    
-    # Get projects
-    headers = {"Authorization": f"Bearer {token}"}
-    projects_query = f"""
-    query {{
-      organization(login: "{org_name}") {{
-        projectsV2(first: 100) {{
-          nodes {{
-            id
-            title
-          }}
-        }}
-      }}
-    }}
+def get_actual_current_iteration(token, org_name, project_name, project_number):
+    """Get the actual current iteration (not adjusted for report generation).
+
+    Looks the project up directly by its stable ProjectV2 number; project_name
+    is treated as a sanity-check reference only.
     """
-    
+    print(f"Fetching project #{project_number} for organization: {org_name}")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    project_query = """
+    query($org: String!, $projectNumber: Int!) {
+      organization(login: $org) {
+        projectV2(number: $projectNumber) {
+          id
+          title
+          number
+        }
+      }
+    }
+    """
+
     response = requests.post(
         "https://api.github.com/graphql",
-        json={"query": projects_query},
-        headers=headers
+        json={"query": project_query, "variables": {"org": org_name, "projectNumber": project_number}},
+        headers=headers,
     )
     response.raise_for_status()
     data = response.json()
-    
-    projects = data.get("data", {}).get("organization", {}).get("projectsV2", {}).get("nodes", [])
-    project = next((p for p in projects if p.get("title") == project_name), None)
-    
+
+    project = (
+        data.get("data", {})
+        .get("organization", {})
+        .get("projectV2")
+    )
+
     if not project:
         return None
-    
+
+    actual_title = project.get("title")
+    if actual_title != project_name:
+        print(
+            f"⚠️  Project #{project_number} title is '{actual_title}', expected '{project_name}' — "
+            "check whether it was renamed or replaced."
+        )
+
     project_id = project["id"]
     
     # Get iteration field
@@ -134,19 +146,27 @@ def main():
     
     token = os.environ.get("GITHUB_TOKEN")
     org_name = os.environ.get("GITHUB_ORG_NAME")
-    
+    project_name = os.environ.get("GITHUB_PROJECT_NAME", "Michigan App Team Task Board")
+    project_number_env = os.environ.get("GITHUB_PROJECT_NUMBER", "4")
+
     if not token:
         print("❌ GITHUB_TOKEN not set. Please set it in .env file or environment.")
         sys.exit(1)
-    
+
     if not org_name:
         print("❌ GITHUB_ORG_NAME not set. Please set it in .env file or environment.")
         sys.exit(1)
-    
-    print(f"Fetching current iteration info for {org_name}...")
-    
+
     try:
-        iteration_info = get_actual_current_iteration(token, org_name, "Michigan App Team Task Board")
+        project_number = int(project_number_env)
+    except ValueError:
+        print(f"❌ GITHUB_PROJECT_NUMBER must be an integer, got: {project_number_env!r}")
+        sys.exit(1)
+
+    print(f"Fetching current iteration info for {org_name}...")
+
+    try:
+        iteration_info = get_actual_current_iteration(token, org_name, project_name, project_number)
         
         if not iteration_info:
             print("❌ No active iteration found")

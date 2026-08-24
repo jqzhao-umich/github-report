@@ -504,7 +504,9 @@ async def github_report_api():
     """
     GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
     ORG_NAME = os.environ.get("GITHUB_ORG_NAME")
-    
+    PROJECT_NAME = os.environ.get("GITHUB_PROJECT_NAME", "Michigan App Team Task Board")
+    PROJECT_NUMBER = int(os.environ.get("GITHUB_PROJECT_NUMBER", "4"))
+
     if not GITHUB_TOKEN:
         return "GitHub token not set in environment. Please set GITHUB_TOKEN environment variable."
     if not ORG_NAME:
@@ -521,7 +523,7 @@ async def github_report_api():
     # Get current iteration information from GitHub Projects
     iteration_info = None
     try:
-        iteration_info = get_current_iteration_info(GITHUB_TOKEN, ORG_NAME, "Michigan App Team Task Board")
+        iteration_info = get_current_iteration_info(GITHUB_TOKEN, ORG_NAME, PROJECT_NAME, PROJECT_NUMBER)
         print(f"Retrieved iteration info: {iteration_info}")
     except Exception as e:
         print(f"Error getting iteration info: {e}")
