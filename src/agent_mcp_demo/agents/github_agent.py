@@ -47,64 +47,76 @@ from ..utils.commit_metrics import collect_commit_metrics
 from ..utils.issue_metrics import collect_issue_metrics
 from . import _wire
 
-def get_current_iteration_info(github_token: str, org_name: str, project_name: str = "Michigan App Team Task Board") -> dict:
+def get_current_iteration_info(
+    github_token: str,
+    org_name: str,
+    project_name: str = "Michigan App Team Task Board",
+    project_number: int = 4,
+) -> dict:
     """
-    Get current iteration information from GitHub Projects using GraphQL API
+    Get current iteration information from GitHub Projects using GraphQL API.
+
+    project_number is the primary lookup key (stable for the life of the project);
+    project_name is kept as a sanity-check reference and used in fallback paths.
     """
     import requests
     import json
-    
+
     try:
         headers = {
             'Authorization': f'Bearer {github_token}',
             'Content-Type': 'application/json',
         }
-        
-        # GraphQL query to get organization projects
+
+        # Direct lookup by stable project number; title is verified after.
         query = """
-        query($orgName: String!) {
+        query($orgName: String!, $projectNumber: Int!) {
           organization(login: $orgName) {
-            projectsV2(first: 20) {
-              nodes {
-                id
-                title
-                number
-                url
-              }
+            projectV2(number: $projectNumber) {
+              id
+              title
+              number
+              url
             }
           }
         }
         """
-        
-        variables = {
-            "orgName": org_name
-        }
-        
+
+        variables = {"orgName": org_name, "projectNumber": project_number}
+
         response = requests.post(
             'https://api.github.com/graphql',
             headers=headers,
             json={'query': query, 'variables': variables}
         )
-        
+
         if response.status_code != 200:
-            print(f"Error getting projects via GraphQL: {response.status_code} - {response.text}")
+            print(f"Error getting project via GraphQL: {response.status_code} - {response.text}")
             return None
-            
+
         data = response.json()
-        
+
         if 'errors' in data:
             print(f"GraphQL errors: {data['errors']}")
             return None
-            
-        projects = data['data']['organization']['projectsV2']['nodes']
-        target_project = next((p for p in projects if p.get('title') == project_name), None)
-        
+
+        target_project = (
+            data.get('data', {})
+            .get('organization', {})
+            .get('projectV2')
+        )
+
         if not target_project:
-            print(f"Project '{project_name}' not found in organization '{org_name}'")
-            print(f"Available projects: {[p.get('title') for p in projects]}")
+            print(f"Project #{project_number} not found in organization '{org_name}'")
             # Fall through to environment variable fallback
         else:
-            print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
+            actual_title = target_project.get('title')
+            if actual_title != project_name:
+                print(
+                    f"WARNING: Project #{project_number} title is '{actual_title}', "
+                    f"expected '{project_name}' — check whether it was renamed or replaced."
+                )
+            print(f"Found project: {actual_title} (#{target_project.get('number')}, ID: {target_project.get('id')})")
             
             # Get project fields
             fields_query = """
@@ -273,9 +285,10 @@ async def handle_call_tool(
                 raise ValueError("org_name is required")
                 
             project_name = arguments.get("project_name", "Michigan App Team Task Board")
-            print(f"Getting iteration info for org: {org_name}, project: {project_name}")
-            
-            iteration_info = get_current_iteration_info(GITHUB_TOKEN, org_name, project_name)
+            project_number = int(arguments.get("project_number", 4))
+            print(f"Getting iteration info for org: {org_name}, project #{project_number} ({project_name})")
+
+            iteration_info = get_current_iteration_info(GITHUB_TOKEN, org_name, project_name, project_number)
             if iteration_info is None:
                 raise GitHubAccessError("Could not fetch iteration information")
                 

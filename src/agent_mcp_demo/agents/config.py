@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # GitHub settings
     github_token: str
     github_org_name: str
+    github_project_number: int = 4
+    github_project_name: str = "Michigan App Team Task Board"
     github_iteration_start: Optional[str] = None
     github_iteration_end: Optional[str] = None
     github_iteration_name: Optional[str] = "Current Sprint"

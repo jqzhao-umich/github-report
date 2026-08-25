@@ -15,23 +15,25 @@ from zoneinfo import ZoneInfo
 
 
 def get_current_iteration_info(
-    github_token: str, 
-    org_name: str, 
-    project_name: str = "Michigan App Team Task Board"
+    github_token: str,
+    org_name: str,
+    project_name: str = "Michigan App Team Task Board",
+    project_number: int = 4,
 ) -> dict:
     """
     Get current iteration information from GitHub Projects using GraphQL API.
-    
+
     Logic:
     - If today is the first day of a new iteration, returns the PREVIOUS iteration
     - Otherwise, returns the current iteration
     - Falls back to environment variables if GraphQL fails
-    
+
     Args:
         github_token: GitHub personal access token with project read permissions
         org_name: GitHub organization name
-        project_name: GitHub Projects board name
-        
+        project_name: Expected project title, used only as a sanity-check reference
+        project_number: Stable ProjectV2 number (from the project URL). Primary lookup key.
+
     Returns:
         Dictionary with iteration info: {
             'name': 'Iteration 74',
@@ -46,58 +48,59 @@ def get_current_iteration_info(
             'Authorization': f'Bearer {github_token}',
             'Content-Type': 'application/json',
         }
-        
-        # GraphQL query to get organization projects
+
+        # Look the project up by its stable number rather than filtering all
+        # projects by title; project_name is retained only for a sanity check.
         query = """
-        query($orgName: String!) {
+        query($orgName: String!, $projectNumber: Int!) {
           organization(login: $orgName) {
-            projectsV2(first: 20) {
-              nodes {
-                id
-                title
-                number
-                url
-              }
+            projectV2(number: $projectNumber) {
+              id
+              title
+              number
+              url
             }
           }
         }
         """
-        
-        variables = {"orgName": org_name}
-        
+
+        variables = {"orgName": org_name, "projectNumber": project_number}
+
         response = requests.post(
             'https://api.github.com/graphql',
             headers=headers,
             json={'query': query, 'variables': variables},
             timeout=10
         )
-        
+
         if response.status_code != 200:
-            print(f"Error getting projects via GraphQL: {response.status_code} - {response.text}")
+            print(f"Error getting project via GraphQL: {response.status_code} - {response.text}")
             return _fallback_to_env_vars(org_name, project_name)
-        
+
         data = response.json()
-        
+
         if 'errors' in data:
             print(f"GraphQL errors: {data['errors']}")
             return _fallback_to_env_vars(org_name, project_name)
-        
-        projects = data['data']['organization']['projectsV2']['nodes']
-        print(f"Found {len(projects)} projects in organization")
-        
-        # Find the specific project
-        target_project = None
-        for project in projects:
-            if project.get('title') == project_name:
-                target_project = project
-                break
-        
+
+        target_project = (
+            data.get('data', {})
+            .get('organization', {})
+            .get('projectV2')
+        )
+
         if not target_project:
-            print(f"Project '{project_name}' not found in organization '{org_name}'")
-            print(f"Available projects: {[p.get('title') for p in projects]}")
+            print(f"Project #{project_number} not found in organization '{org_name}'")
             return _fallback_to_env_vars(org_name, project_name)
-        
-        print(f"Found project: {target_project.get('title')} (ID: {target_project.get('id')})")
+
+        actual_title = target_project.get('title')
+        if actual_title != project_name:
+            print(
+                f"WARNING: Project #{project_number} title is '{actual_title}', "
+                f"expected '{project_name}' — check whether it was renamed or replaced."
+            )
+
+        print(f"Found project: {actual_title} (#{target_project.get('number')}, ID: {target_project.get('id')})")
         
         # Get project fields to find iteration configuration
         fields_query = """
